@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MTC Casilla Bot — Dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header>
+  <h1>📬 MTC Casilla Bot</h1>
+  <div class="header-actions">
+    <button id="btn-refresh" class="hidden" title="Recargar">🔄</button>
+    <span id="last-update" class="muted"></span>
+  </div>
+</header>
+
+<!-- Onboarding: solo visible cuando no hay API_URL configurada -->
+<section id="onboarding" class="onboarding hidden" aria-labelledby="onboarding-title">
+  <div class="onboarding-card">
+    <h2 id="onboarding-title">🔌 Conectá el dashboard a tu Apps Script</h2>
+    <p class="muted">
+      Pegá la URL del Web App deployado desde Apps Script para empezar a ver
+      las notificaciones procesadas.
+    </p>
+    <form id="api-url-form" class="onboarding-form" novalidate>
+      <label for="api-url-input" class="sr-only">URL del Apps Script</label>
+      <input
+        type="url"
+        id="api-url-input"
+        name="apiUrl"
+        placeholder="https://script.google.com/macros/s/.../exec"
+        autocomplete="off"
+        spellcheck="false"
+        required
+      >
+      <button type="submit" id="btn-save-url">Guardar y conectar</button>
+    </form>
+    <p id="onboarding-error" class="onboarding-error hidden" role="alert"></p>
+    <p class="muted small">
+      🔒 La URL queda guardada solo en este navegador (localStorage).
+    </p>
+  </div>
+</section>
+
+<!-- Dashboard: solo visible cuando hay API_URL configurada -->
+<div id="dashboard" class="hidden">
+
+  <section class="metrics" id="metrics">
+    <div class="metric"><span class="value" id="m-total">—</span><span class="label">Total</span></div>
+    <div class="metric pendiente"><span class="value" id="m-pendientes">—</span><span class="label">Pendientes</span></div>
+    <div class="metric vencido"><span class="value" id="m-vencidos">—</span><span class="label">Vencidos</span></div>
+    <div class="metric hoy"><span class="value" id="m-hoy">—</span><span class="label">Hoy</span></div>
+  </section>
+
+  <section class="filters">
+    <input type="search" id="filter-search" placeholder="🔎 Buscar (documento, empresa, asunto)...">
+    <select id="filter-ruc"><option value="">Todos los RUCs</option></select>
+    <select id="filter-estado">
+      <option value="">Todos los estados</option>
+      <option value="pendiente">Pendiente</option>
+      <option value="completado">Completado</option>
+      <option value="informativo">Informativo</option>
+    </select>
+    <label class="check"><input type="checkbox" id="filter-pendientes"> Solo pendientes</label>
+    <input type="date" id="filter-since" title="Desde">
+  </section>
+
+  <main>
+    <div id="loading" class="loading hidden">⏳ Cargando...</div>
+
+    <!-- Card de error con URL en uso + botón cambiar URL -->
+    <div id="error-card" class="error-card hidden" role="alert">
+      <div class="error-card-header">
+        <strong>⚠️ No se pudo conectar con la API</strong>
+      </div>
+      <div class="error-card-body">
+        <p>URL en uso: <code id="error-api-url"></code></p>
+        <p id="error-message" class="error-message"></p>
+      </div>
+      <div class="error-card-actions">
+        <button id="btn-error-change-url">🔧 Cambiar URL del API</button>
+        <button id="btn-error-retry">🔄 Reintentar</button>
+      </div>
+    </div>
+
+    <table id="notif-table" class="hidden">
+      <thead>
+        <tr>
+          <th>Estado</th>
+          <th>Fecha</th>
+          <th>Documento</th>
+          <th>Empresa (RUC)</th>
+          <th>Emisor</th>
+          <th>Plazo</th>
+          <th>Días</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="notif-tbody"></tbody>
+    </table>
+
+    <div id="empty-filtered" class="empty hidden">
+      No hay notificaciones que coincidan con los filtros.
+    </div>
+    <div id="empty-api" class="empty hidden">
+      <p>✅ Conectado a la API · Aún no hay notificaciones procesadas.</p>
+      <p class="muted small">
+        Cuando el bot Python procese su primera notificación, aparecerá acá.
+      </p>
+    </div>
+  </main>
+
+  <!-- Modal detalle -->
+  <div id="modal" class="modal hidden">
+    <div class="modal-content">
+      <button class="modal-close" id="modal-close">✕</button>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <span class="muted">
+    MTC Casilla Bot · Dashboard local · <span id="api-status"></span>
+  </span>
+  <button id="btn-change-url" class="btn-link hidden" title="Limpiar URL guardada y reconfigurar">
+    🔧 Cambiar URL del API
+  </button>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

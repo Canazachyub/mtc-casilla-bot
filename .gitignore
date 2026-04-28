@@ -1,0 +1,143 @@
+# Auditado por qa-agent — Fase 0 BLOQUE 1 — 2026-04-28
+# ──────────────────────────────────────────────────────
+# Credenciales y datos sensibles (NUNCA commitear)
+# ──────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.local.*
+data/credentials/*
+data/downloads/*
+data/merged/*
+data/processed/*
+output/obsidian/
+playwright-traces/
+playwright-screenshots/
+*.session.json
+
+# ──────────────────────────────────────────────────────
+# Claude Code personal
+# ──────────────────────────────────────────────────────
+CLAUDE.local.md
+.claude/settings.local.json
+.claude/projects/
+
+# ──────────────────────────────────────────────────────
+# Python
+# ──────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+/downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Entornos virtuales
+.venv/
+venv/
+env/
+ENV/
+
+# uv
+.python-version
+# uv.lock se trackea (decisión de Yubert) — NO ignorar
+
+# ──────────────────────────────────────────────────────
+# Testing
+# ──────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# ──────────────────────────────────────────────────────
+# Logs
+# ──────────────────────────────────────────────────────
+logs/
+*.log
+
+# ──────────────────────────────────────────────────────
+# IDE
+# ──────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ──────────────────────────────────────────────────────
+# Build artifacts
+# ──────────────────────────────────────────────────────
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+
+# ──────────────────────────────────────────────────────
+# === Refuerzos QA Fase 0 ===
+# (agregados por qa-agent 2026-04-28)
+# ──────────────────────────────────────────────────────
+
+# Service account JSON — patrón GLOBAL (en cualquier subpath)
+service-account*.json
+*service-account*.json
+**/service-account*.json
+
+# Plantillas locales sincronizadas desde Obsidian (no trackear contenido,
+# solo .gitkeep y README para preservar la carpeta)
+data/templates/*
+
+# Preservar .gitkeep y README.md dentro de carpetas data/* ignoradas
+!data/credentials/.gitkeep
+!data/credentials/README.md
+!data/downloads/.gitkeep
+!data/downloads/README.md
+!data/merged/.gitkeep
+!data/merged/README.md
+!data/processed/.gitkeep
+!data/processed/README.md
+!data/templates/.gitkeep
+!data/templates/README.md
+
+# Refuerzo: cualquier CSV de credenciales o session blob
+data/credentials/*.csv
+data/credentials/*.json
+data/credentials/*.key
+data/credentials/*.pem
+*.session.json
+**/*.session.json
+
+# Pero SÍ trackear los .example (plantillas públicas, sin datos reales)
+!data/credentials/*.csv.example
+!data/credentials/*.json.example
+
+# Backups y dumps accidentales
+*.bak
+*.dump
+*.sqlite
+*.db
+
+# OS / Windows extras
+desktop.ini
+$RECYCLE.BIN/

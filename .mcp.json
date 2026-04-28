@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "_comment": "Agregar servidores MCP cuando sean necesarios. Por defecto vacío para evitar conexiones innecesarias. Si querés conectar Drive para leer el Sheet de credenciales, descomentá y configurá. Si querés que Claude Code consulte la documentación oficial de Playwright on-demand, podés habilitar el MCP de fetch HTTP."
+  }
+}

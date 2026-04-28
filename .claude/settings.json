@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "model": "claude-sonnet-4-5",
+  "permissions": {
+    "allow": [
+      "Bash(uv *)",
+      "Bash(python *)",
+      "Bash(pytest *)",
+      "Bash(playwright *)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git status)",
+      "Bash(git branch:*)",
+      "Bash(git show:*)",
+      "Bash(git add src/*)",
+      "Bash(git add tests/*)",
+      "Bash(git add .claude/*)",
+      "Bash(git add CLAUDE.md)",
+      "Bash(git add README.md)",
+      "Bash(git add pyproject.toml)",
+      "Bash(git commit -m:*)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(grep *)",
+      "Bash(find *)",
+      "Bash(rg *)",
+      "Bash(tree *)",
+      "Bash(curl https://api.deepseek.com/*)",
+      "Bash(curl https://generativelanguage.googleapis.com/*)",
+      "Read(src/**)",
+      "Read(tests/**)",
+      "Read(.claude/**)",
+      "Read(*.md)",
+      "Read(*.toml)",
+      "Read(*.json)",
+      "Read(.env.example)",
+      "Edit(src/**)",
+      "Edit(tests/**)",
+      "Edit(.claude/**)",
+      "Edit(*.md)",
+      "Edit(pyproject.toml)",
+      "Edit(.gitignore)",
+      "Edit(.env.example)",
+      "Write(src/**)",
+      "Write(tests/**)",
+      "Write(logs/**)"
+    ],
+    "deny": [
+      "Read(.env)",
+      "Read(.env.local)",
+      "Read(data/credentials/**)",
+      "Edit(.env)",
+      "Edit(data/credentials/**)",
+      "Write(.env)",
+      "Bash(git add .env*)",
+      "Bash(git add data/*)",
+      "Bash(git add output/*)",
+      "Bash(git add logs/*)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf ~)",
+      "Bash(rm -rf .git*)",
+      "Bash(curl * | sh)",
+      "Bash(curl * | bash)",
+      "Bash(wget * | sh)"
+    ],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(rm -rf data/*)",
+      "Bash(rm -rf output/*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/PostToolUse.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/SessionStart.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
