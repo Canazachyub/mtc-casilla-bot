@@ -4,11 +4,12 @@ Comandos disponibles:
     * ``doctor`` — health check de la configuración y conectividad Google.
     * ``version`` — imprime la versión del paquete.
     * ``run`` — stub Fase 1 (no implementado todavía).
-    * ``test-login`` — stub Fase 1 (no implementado todavía).
+    * ``test-login`` — prueba el login en la Casilla MTC para 1 RUC.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from typing import Annotated
@@ -34,6 +35,12 @@ from mtc_bot.config import (
     get_settings,
 )
 from mtc_bot.models import load_rucs
+from mtc_bot.scraper.login import (
+    LoginFailed,
+    browser_session,
+    detect_login_summary,
+    perform_login,
+)
 
 app = typer.Typer(
     name="mtc-bot",
@@ -144,9 +151,7 @@ def _check_rucs_csv(settings: Settings) -> tuple[list[str], list[str]]:
     try:
         rucs = load_rucs(csv_path)
         activos = sum(1 for r in rucs if r.activo)
-        lines.append(
-            f"  {OK} CSV de RUCs: {len(rucs)} entradas ({activos} activas)"
-        )
+        lines.append(f"  {OK} CSV de RUCs: {len(rucs)} entradas ({activos} activas)")
     except Exception as exc:
         lines.append(f"  {FAIL} CSV de RUCs inválido: {exc}")
         errors.append(f"CSV inválido: {exc}")
@@ -163,8 +168,7 @@ def _check_sheet(settings: Settings) -> tuple[list[str], list[str]]:
         )
     except ImportError as exc:
         lines.append(
-            f"  {WARN} Módulo google.sheets_writer no disponible "
-            f"(¿faltó instalar deps?): {exc}"
+            f"  {WARN} Módulo google.sheets_writer no disponible (¿faltó instalar deps?): {exc}"
         )
         return lines, errors
     except Exception as exc:  # noqa: BLE001
@@ -178,9 +182,7 @@ def _check_sheet(settings: Settings) -> tuple[list[str], list[str]]:
         return lines, errors
 
     try:
-        status = verify_sheet_access(
-            settings.google_service_account_json, settings.sheet_id
-        )
+        status = verify_sheet_access(settings.google_service_account_json, settings.sheet_id)
         title = status.get("sheet_title", "?")
         present = status.get("tabs_present", []) or []
         missing = status.get("tabs_missing", []) or []
@@ -206,8 +208,7 @@ def _check_drive(settings: Settings) -> tuple[list[str], list[str]]:
         )
     except ImportError as exc:
         lines.append(
-            f"  {WARN} Módulo google.drive_uploader no disponible "
-            f"(¿faltó instalar deps?): {exc}"
+            f"  {WARN} Módulo google.drive_uploader no disponible (¿faltó instalar deps?): {exc}"
         )
         return lines, errors
     except Exception as exc:  # noqa: BLE001
@@ -226,8 +227,7 @@ def _check_drive(settings: Settings) -> tuple[list[str], list[str]]:
         )
         name = status.get("folder_name") or status.get("name") or "?"
         lines.append(
-            f"  {OK} Carpeta Drive accesible: '{name}' "
-            f"(id={settings.drive_root_folder_id})"
+            f"  {OK} Carpeta Drive accesible: '{name}' (id={settings.drive_root_folder_id})"
         )
     except Exception as exc:  # noqa: BLE001
         lines.append(f"  {FAIL} No se pudo acceder a la carpeta de Drive: {exc}")
@@ -271,9 +271,7 @@ def doctor_cmd() -> None:
         console.print(line)
     all_errors.extend(errors)
     if settings is None:
-        console.print(
-            f"\n{FAIL} [red]Configuración inválida — abortando chequeos restantes.[/red]"
-        )
+        console.print(f"\n{FAIL} [red]Configuración inválida — abortando chequeos restantes.[/red]")
         raise typer.Exit(code=1)
 
     # Audit log de las vars (enmascarado)
@@ -363,14 +361,67 @@ def run_cmd(
 
 @app.command("test-login")
 def test_login_cmd(
-    ruc: Annotated[
-        str | None, typer.Option("--ruc", help="RUC específico a probar.")
-    ] = None,
+    ruc: Annotated[str, typer.Option("--ruc", "-r", help="RUC a probar (11 dígitos).")],
+    headed: Annotated[
+        bool,
+        typer.Option(
+            "--headed",
+            help="Forzar modo visible (override de MTC_BOT_HEADED).",
+        ),
+    ] = False,
 ) -> None:
-    """Prueba el login en la Casilla MTC para un RUC. (stub Fase 1)."""
-    _ = ruc
-    console.print("[yellow]Not implemented yet (Fase 1)[/yellow]")
-    raise typer.Exit(code=0)
+    """Prueba el login en la Casilla MTC para 1 RUC.
+
+    Ejemplo:
+        uv run mtc-bot test-login --ruc 20602194958
+        uv run mtc-bot test-login --ruc 20602194958 --headed
+    """
+    _setup_logging("INFO")
+    apply_credential_filter()
+    settings = get_settings()
+
+    try:
+        rucs = load_rucs(settings.mtc_credentials_csv)
+    except FileNotFoundError as exc:
+        console.print(f"[red]✗ {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    except ValueError as exc:
+        console.print(f"[red]✗ CSV inválido: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    target = next((r for r in rucs if r.ruc == ruc and r.activo), None)
+    if target is None:
+        ruc_mask_prefix = 5
+        masked = f"{ruc[:ruc_mask_prefix]}***" if len(ruc) >= ruc_mask_prefix else "***"
+        console.print(f"[red]✗ RUC {masked} no encontrado o inactivo en el CSV.[/red]")
+        raise typer.Exit(code=1)
+
+    # Override headed solo si el flag --headed se pasa explícitamente
+    headless = not (headed or settings.mtc_bot_headed)
+
+    async def _run() -> None:
+        async with browser_session(headless=headless) as ctx:
+            page = await ctx.new_page()
+            try:
+                await perform_login(page, target)
+            except LoginFailed as exc:
+                console.print(f"[red]✗ LoginFailed:[/red] {exc}")
+                raise typer.Exit(code=1) from exc
+            except NotImplementedError as exc:
+                console.print(f"[yellow]⚠ {exc}[/yellow]")
+                raise typer.Exit(code=2) from exc
+
+            summary = await detect_login_summary(page)
+            console.print(f"[green]✓ Login OK[/green] — {target.empresa}")
+            console.print(
+                f"  Representante legal cuenta: "
+                f"{summary.get('representante_legal') or '(no detectado)'}"
+            )
+            console.print(f"  Tipo: {summary.get('tipo_persona') or '(no detectado)'}")
+            tot = summary.get("total_notificaciones")
+            console.print(f"  Total notificaciones: {tot if tot is not None else '(no detectado)'}")
+
+    asyncio.run(_run())
 
 
 if __name__ == "__main__":
