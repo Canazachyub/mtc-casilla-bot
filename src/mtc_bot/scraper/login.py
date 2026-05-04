@@ -3,7 +3,7 @@
 Soporta dos modos:
 
 * ``direct``: form de login con RUC + DNI rep. legal + contraseña casilla.
-* ``clave_sol``: stub — pendiente capturar HTML real del portal SUNAT.
+* ``clave_sol``: redirect OAuth2 a ``api-seguridad.sunat.gob.pe`` y vuelta a MTC.
 
 Las cuentas de la Casilla MTC son SIEMPRE PERSONA JURIDICA en este proyecto;
 nunca PERSONA NATURAL.
@@ -47,8 +47,19 @@ SEL_RUC = "input[formcontrolname='ruc']"
 SEL_USERNAME = "input[formcontrolname='username']"
 SEL_PASSWORD = "input[formcontrolname='password']"  # noqa: S105 — selector CSS, no credencial
 SEL_BTN_LOGIN = "button.btn-login"
+SEL_BTN_CLAVE_SOL = "button.btn-clave-sol"
 SEL_MAT_OPTION_PJ = "mat-option:has-text('PERSONA JURIDICA')"
 SEL_MAT_ERROR = "mat-error"
+
+# Selectores SUNAT (Bootstrap clásico, IDs únicos en api-seguridad.sunat.gob.pe)
+SUNAT_SEL_TAB_RUC = "#btnPorRuc"
+SUNAT_SEL_TAB_DNI = "#btnPorDni"
+SUNAT_SEL_INPUT_RUC = "#txtRuc"
+SUNAT_SEL_INPUT_USUARIO = "#txtUsuario"
+SUNAT_SEL_INPUT_PASSWORD = "#txtContrasena"  # noqa: S105 — selector CSS, no credencial
+SUNAT_SEL_BTN_SUBMIT = "#btnAceptar"
+SUNAT_SEL_ERROR = "#divMensajeError #spanMensajeError"
+SUNAT_SEL_CHECKBOX_REMEMBER = "#chkRecuerdame"
 
 # Selectores post-login
 SEL_HEADER_REP_LEGAL = ".custom-header span[style*='font-weight: 500']"
@@ -203,11 +214,47 @@ async def _read_mat_error(page: Page) -> str | None:
     return None
 
 
+async def _read_sunat_error(page: Page) -> str | None:
+    """Lee el mensaje de error visible en el portal SUNAT, si existe.
+
+    El form de SUNAT usa ``#divMensajeError #spanMensajeError`` con clase
+    ``hidden`` cuando no hay error.
+
+    Returns:
+        Texto del error o ``None`` si no hay ninguno visible en 2 segundos.
+    """
+    try:
+        err = page.locator(SUNAT_SEL_ERROR).first
+        if await err.is_visible(timeout=2_000):
+            text = (await err.inner_text()).strip()
+            return text or None
+    except (PlaywrightTimeoutError, Exception):  # noqa: BLE001
+        return None
+    return None
+
+
 def _mask_ruc(ruc: str) -> str:
     """Devuelve el RUC enmascarado tipo ``20602***``."""
     if len(ruc) >= _RUC_MASK_PREFIX:
         return f"{ruc[:_RUC_MASK_PREFIX]}***"
     return "***"
+
+
+async def _open_mtc_login_with_pj(page: Page) -> None:
+    """Navega al login MTC y asegura el dropdown ``tipoPersona`` en JURIDICA.
+
+    Encapsula los dos pasos comunes a cualquier flujo de autenticación
+    (``login_direct`` y ``login_clave_sol``):
+
+        1. ``page.goto(LOGIN_URL)`` y espera al ``mat-select`` de tipoPersona.
+        2. Asegura ``PERSONA JURIDICA`` en el dropdown.
+
+    Args:
+        page: página del browser sobre la que operar.
+    """
+    await page.goto(LOGIN_URL, wait_until="domcontentloaded")
+    await page.wait_for_selector(SEL_TIPO_PERSONA, state="visible", timeout=DEFAULT_TIMEOUT_MS)
+    await _ensure_persona_juridica(page)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -243,12 +290,8 @@ async def login_direct(page: Page, creds: RucCredentials) -> None:
     masked = _mask_ruc(creds.ruc)
     logger.info("Login DIRECT iniciado para RUC %s (empresa=%s)", masked, creds.empresa)
 
-    # 1. Navegar al login y esperar el dropdown tipoPersona (siempre presente)
-    await page.goto(LOGIN_URL, wait_until="domcontentloaded")
-    await page.wait_for_selector(SEL_TIPO_PERSONA, state="visible", timeout=DEFAULT_TIMEOUT_MS)
-
-    # 2. Asegurar PERSONA JURIDICA (esto hace aparecer el campo RUC en el form)
-    await _ensure_persona_juridica(page)
+    # 1-2. Navegar al login MTC y asegurar PERSONA JURIDICA (helper compartido)
+    await _open_mtc_login_with_pj(page)
 
     # 3. Esperar el campo RUC (existe solo cuando tipoPersona == PERSONA JURIDICA) y llenar
     await page.wait_for_selector(SEL_RUC, state="visible", timeout=DEFAULT_TIMEOUT_MS)
@@ -296,21 +339,113 @@ async def login_direct(page: Page, creds: RucCredentials) -> None:
 
 
 async def login_clave_sol(page: Page, creds: RucCredentials) -> None:
-    """Stub Fase 1 — pendiente captura del HTML real de SUNAT.
+    """Realiza login vía Clave SOL de SUNAT (single-sign-on OAuth2).
+
+    Flujo:
+        1. Navega al login MTC y selecciona PERSONA JURIDICA.
+        2. Clic en "Iniciar sesión con Clave SOL" (``button.btn-clave-sol``).
+        3. Espera redirect a ``api-seguridad.sunat.gob.pe``.
+        4. Asegura tab RUC activo (``#btnPorRuc``).
+        5. Llena ``#txtRuc``, ``#txtUsuario``, ``#txtContrasena`` con creds.
+        6. NO toca ``#chkRecuerdame`` — queda OFF (no persistir sesiones).
+        7. Click en ``#btnAceptar``.
+        8. Espera redirect de vuelta a ``casilla.mtc.gob.pe/#/casilla``.
+        9. Valida que el header del inbox MTC esté visible.
 
     Args:
         page: página del browser.
-        creds: credenciales del RUC.
+        creds: credenciales (``auth_method='clave_sol'``, debe tener
+            ``sol_usuario`` y ``sol_clave``).
 
     Raises:
-        NotImplementedError: siempre, hasta que se capture el HTML de
-            ``api-seguridad.sunat.gob.pe``.
+        ValueError: si ``auth_method != 'clave_sol'`` o faltan
+            ``sol_usuario``/``sol_clave``.
+        LoginFailed: si SUNAT rechaza credenciales o no hay redirect a MTC.
     """
-    _ = (page, creds)
-    raise NotImplementedError(
-        "Login Clave SOL requiere captura del HTML de api-seguridad.sunat.gob.pe. "
-        "Pendiente para próxima iteración de Fase 1."
+    if creds.auth_method != "clave_sol":
+        raise ValueError(
+            f"login_clave_sol requiere auth_method='clave_sol', "
+            f"recibido: {creds.auth_method!r}"
+        )
+    if not creds.sol_usuario or not creds.sol_clave:
+        raise ValueError(
+            f"RUC {_mask_ruc(creds.ruc)}: faltan sol_usuario/sol_clave en credenciales"
+        )
+
+    masked = _mask_ruc(creds.ruc)
+    logger.info("Login CLAVE SOL iniciado para RUC %s (empresa=%s)", masked, creds.empresa)
+
+    # 1-2. Login MTC PJ + click btn-clave-sol
+    await _open_mtc_login_with_pj(page)
+    btn_sol = page.locator(SEL_BTN_CLAVE_SOL).first
+    await btn_sol.wait_for(state="visible", timeout=DEFAULT_TIMEOUT_MS)
+    await btn_sol.click()
+
+    # 3. Esperar landing en SUNAT (URL contiene sunat.gob.pe)
+    try:
+        await page.wait_for_url(f"**{SUNAT_HOST_FRAGMENT}**", timeout=LOGIN_NAV_TIMEOUT_MS)
+    except PlaywrightTimeoutError as exc:
+        raise LoginFailed(
+            f"RUC {masked}: timeout esperando redirect a SUNAT "
+            f"(url actual={page.url})"
+        ) from exc
+
+    # 4. Asegurar tab RUC activo y campo visible
+    await page.wait_for_selector(
+        SUNAT_SEL_INPUT_RUC, state="visible", timeout=DEFAULT_TIMEOUT_MS
     )
+    tab_ruc = page.locator(SUNAT_SEL_TAB_RUC).first
+    classes = (await tab_ruc.get_attribute("class")) or ""
+    if "active" not in classes:
+        logger.debug("Tab RUC no activo en SUNAT — clickeando para activarlo")
+        await tab_ruc.click()
+        await page.wait_for_selector(SUNAT_SEL_INPUT_RUC, state="visible", timeout=5_000)
+
+    # 5. Llenar campos. NO loggear sol_clave (ni siquiera su longitud)
+    sol_clave_value = (
+        creds.sol_clave.get_secret_value()
+        if hasattr(creds.sol_clave, "get_secret_value")
+        else creds.sol_clave
+    )
+    await page.locator(SUNAT_SEL_INPUT_RUC).fill(creds.ruc)
+    await page.locator(SUNAT_SEL_INPUT_USUARIO).fill(creds.sol_usuario)
+    await page.locator(SUNAT_SEL_INPUT_PASSWORD).fill(sol_clave_value)
+    logger.debug("Form SUNAT completado para RUC %s — listo para submit", masked)
+
+    # 6. (chkRecuerdame queda OFF intencionalmente — regla del proyecto)
+
+    # 7. Click Entrar
+    await page.locator(SUNAT_SEL_BTN_SUBMIT).first.click()
+
+    # 8. Esperar redirect de vuelta a MTC + UI del inbox
+    try:
+        await page.wait_for_selector(
+            SEL_HEADER_REP_LEGAL,
+            state="visible",
+            timeout=LOGIN_NAV_TIMEOUT_MS,
+        )
+    except PlaywrightTimeoutError as exc:
+        current_url = page.url
+        # Si seguimos en SUNAT, intentar leer el mensaje de error visible
+        if SUNAT_HOST_FRAGMENT in current_url:
+            err_text = await _read_sunat_error(page)
+            if err_text:
+                raise LoginFailed(
+                    f"RUC {masked}: SUNAT rechazó credenciales: {err_text}"
+                ) from exc
+            raise LoginFailed(
+                f"RUC {masked}: SUNAT no completó autenticación "
+                f"(url={current_url})"
+            ) from exc
+        raise LoginFailed(
+            f"RUC {masked}: timeout esperando UI MTC post-SUNAT "
+            f"(url={current_url})"
+        ) from exc
+
+    # 9. Sanity check final
+    if "/#/casilla" not in page.url:
+        raise LoginFailed(f"RUC {masked}: post-clave-sol URL inesperada: {page.url}")
+    logger.info("Login CLAVE SOL OK para RUC %s — URL=%s", masked, page.url)
 
 
 async def perform_login(page: Page, creds: RucCredentials) -> None:
