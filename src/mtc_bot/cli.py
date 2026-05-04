@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from datetime import date
 from typing import Annotated
 
 import typer
@@ -344,19 +345,159 @@ def doctor_cmd() -> None:
 # ─────────────────────────────────────────────────────────────────
 
 
+def _parse_since(since: str) -> date | None:
+    """Convierte la opción ``--since`` a fecha. Lanza ``typer.Exit`` si es inválido."""
+    from datetime import timedelta
+
+    today = date.today()
+    if since == "today":
+        return today
+    if since == "yesterday":
+        return today - timedelta(days=1)
+    if since == "all":
+        return None
+    if since.endswith("d") and since[:-1].isdigit():
+        return today - timedelta(days=int(since[:-1]))
+    console.print(f"[red]✗ --since inválido: {since!r}[/red]")
+    raise typer.Exit(code=1)
+
+
+def _load_targets(settings: Settings, ruc: str | None) -> list:
+    """Carga RUCs desde el CSV y filtra por activos / por ``--ruc``."""
+    try:
+        rucs_all = load_rucs(settings.mtc_credentials_csv)
+    except FileNotFoundError as exc:
+        console.print(f"[red]✗ {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    except ValueError as exc:
+        console.print(f"[red]✗ CSV inválido: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    if ruc:
+        targets = [r for r in rucs_all if r.ruc == ruc and r.activo]
+    else:
+        targets = [r for r in rucs_all if r.activo]
+    if not targets:
+        console.print("[red]✗ Ningún RUC activo encontrado para procesar[/red]")
+        raise typer.Exit(code=1)
+    return targets
+
+
+async def _process_one_ruc(  # noqa: PLR0913 — función privada del CLI
+    creds,
+    since_date,
+    limit: int,
+    dry_run: bool,
+    headless: bool,
+    downloads_root_base,
+) -> tuple[int, int]:
+    """Procesa un RUC. Devuelve ``(items_listados, pdfs_descargados)``."""
+    from mtc_bot.scraper.downloader import (
+        download_attachments,
+        extract_detail_metadata,
+    )
+    from mtc_bot.scraper.inbox import click_item, list_inbox
+
+    downloads_root = downloads_root_base / creds.ruc
+    async with browser_session(
+        headless=headless,
+        downloads_path=downloads_root,
+    ) as ctx:
+        page = await ctx.new_page()
+        try:
+            await perform_login(page, creds)
+        except (LoginFailed, NotImplementedError) as exc:
+            console.print(f"  [red]✗[/red] {creds.ruc[:5]}*** login falló: {exc}")
+            return 0, 0
+
+        items = await list_inbox(page, creds.ruc, since=since_date, limit=limit)
+        console.print(f"  {creds.empresa[:40]}: {len(items)} notif para procesar")
+
+        if dry_run:
+            for it in items:
+                console.print(f"    - [{it.fecha}] {it.asunto[:60]}")
+            return len(items), 0
+
+        pdfs_total = 0
+        for it in items:
+            try:
+                await click_item(page, it)
+                _ = await extract_detail_metadata(page)
+                dest = downloads_root / it.notification_id
+                pdfs = await download_attachments(ctx, page, dest)
+                pdfs_total += len(pdfs)
+                console.print(f"    [green]✓[/green] {it.asunto[:50]} → {len(pdfs)} PDF(s)")
+            except Exception as exc:  # noqa: BLE001 — seguir con la siguiente
+                console.print(f"    [red]✗[/red] {it.asunto[:50]}: {exc}")
+        return len(items), pdfs_total
+
+
 @app.command("run")
 def run_cmd(
-    dry_run: Annotated[
-        bool, typer.Option("--dry-run", help="Vista previa sin escribir cambios.")
-    ] = False,
+    ruc: Annotated[
+        str | None,
+        typer.Option("--ruc", "-r", help="RUC específico a procesar (opcional)."),
+    ] = None,
     since: Annotated[
-        str, typer.Option("--since", help="Filtro temporal (ej. 'today', '7d').")
+        str,
+        typer.Option(
+            "--since",
+            help="Filtro temporal: 'today', 'yesterday', 'NNd' (ej '7d') o 'all'.",
+        ),
     ] = "today",
+    limit: Annotated[
+        int,
+        typer.Option("--limit", help="Máximo de notificaciones por RUC."),
+    ] = 5,
+    headed: Annotated[
+        bool,
+        typer.Option("--headed", help="Forzar modo visible del browser."),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Solo lista; no descarga PDFs."),
+    ] = False,
 ) -> None:
-    """Ejecuta el ciclo end-to-end del bot. (stub Fase 1)."""
-    _ = (dry_run, since)
-    console.print("[yellow]Not implemented yet (Fase 1)[/yellow]")
-    raise typer.Exit(code=0)
+    """Ciclo end-to-end: login → listar inbox → descargar PDFs.
+
+    En esta primera iteración solo descarga PDFs a disco local
+    (``data/downloads/<RUC>/<notification_id>/``). NO procesa con IA ni sube
+    a Drive todavía — esos pasos llegan en hitos siguientes de Fase 1.
+    """
+    from mtc_bot.config import PROJECT_ROOT
+
+    _setup_logging("INFO")
+    settings = get_settings()
+
+    since_date = _parse_since(since)
+    targets = _load_targets(settings, ruc)
+    headless = not (headed or settings.mtc_bot_headed)
+    downloads_root_base = PROJECT_ROOT / "data" / "downloads"
+
+    async def _run_all() -> None:
+        console.print(
+            f"\n[bold]Procesando {len(targets)} RUC(s) — "
+            f"since={since}, limit={limit}, dry_run={dry_run}[/bold]\n"
+        )
+        # Secuencial por RUC: regla del proyecto (no paralelizar el mismo RUC).
+        for creds in targets:
+            console.print(f"[cyan]→ {creds.empresa}[/cyan]")
+            try:
+                listed, downloaded = await _process_one_ruc(
+                    creds,
+                    since_date,
+                    limit,
+                    dry_run,
+                    headless,
+                    downloads_root_base,
+                )
+                console.print(
+                    f"  [green]✓[/green] {listed} listadas, {downloaded} PDFs descargados\n"
+                )
+            except Exception as exc:  # noqa: BLE001 — no abortar batch
+                console.print(f"  [red]✗ Error fatal: {exc}[/red]\n")
+
+    asyncio.run(_run_all())
 
 
 @app.command("test-login")

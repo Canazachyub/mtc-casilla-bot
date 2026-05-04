@@ -100,9 +100,7 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-2.5-flash"
 
     # ─ Google ─
-    google_service_account_json: Path = Field(
-        default=Path("data/credentials/service-account.json")
-    )
+    google_service_account_json: Path = Field(default=Path("data/credentials/service-account.json"))
     drive_root_folder_id: str = Field(...)
     drive_templates_folder: str = "_templates"
     sheet_id: str = Field(...)

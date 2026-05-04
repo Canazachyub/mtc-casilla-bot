@@ -267,7 +267,9 @@ async def login_direct(page: Page, creds: RucCredentials) -> None:
     # routing de Angular no se puede matchear con wait_for_url glob estándar.
     try:
         await page.wait_for_selector(
-            SEL_HEADER_REP_LEGAL, state="visible", timeout=LOGIN_NAV_TIMEOUT_MS,
+            SEL_HEADER_REP_LEGAL,
+            state="visible",
+            timeout=LOGIN_NAV_TIMEOUT_MS,
         )
     except PlaywrightTimeoutError as exc:
         current_url = page.url

@@ -90,9 +90,7 @@ class RucCredentials(BaseModel):
                     f"(dni_representante + password_casilla)"
                 )
         elif not (self.sol_usuario and self.sol_clave):
-            raise ValueError(
-                f"RUC {self.ruc}: faltan credenciales SOL (sol_usuario + sol_clave)"
-            )
+            raise ValueError(f"RUC {self.ruc}: faltan credenciales SOL (sol_usuario + sol_clave)")
 
     def __repr__(self) -> str:
         """Repr enmascarado: nunca expone credenciales sensibles."""
@@ -224,9 +222,7 @@ def load_rucs(csv_path: Path) -> list[RucCredentials]:
                     payload["representante_legal"] = rep
                 rucs.append(RucCredentials(**payload))
             except Exception as exc:
-                raise ValueError(
-                    f"Error en fila {idx} del CSV {csv_path.name}: {exc}"
-                ) from exc
+                raise ValueError(f"Error en fila {idx} del CSV {csv_path.name}: {exc}") from exc
 
     activos = sum(1 for r in rucs if r.activo)
     direct = sum(1 for r in rucs if r.auth_method == "direct")

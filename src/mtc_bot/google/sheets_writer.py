@@ -1,4 +1,5 @@
 """Cliente Google Sheets vía gspread con service account."""
+
 from __future__ import annotations
 
 from pathlib import Path

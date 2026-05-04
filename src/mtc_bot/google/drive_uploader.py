@@ -1,4 +1,5 @@
 """Cliente Google Drive vía google-api-python-client con service account."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -49,11 +50,7 @@ def verify_folder_access(sa_json_path: Path, folder_id: str) -> DriveFolderStatu
         googleapiclient.errors.HttpError: 403 si no compartido, 404 si no existe.
     """
     service = get_drive_service(sa_json_path)
-    metadata = (
-        service.files()
-        .get(fileId=folder_id, fields="id,name,mimeType")
-        .execute()
-    )
+    metadata = service.files().get(fileId=folder_id, fields="id,name,mimeType").execute()
     return DriveFolderStatus(
         folder_id=metadata["id"],
         folder_name=metadata["name"],
