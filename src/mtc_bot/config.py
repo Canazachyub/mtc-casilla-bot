@@ -117,6 +117,13 @@ class Settings(BaseSettings):
     obsidian_templates_folder: str = "_templates"
     enable_obsidian_writer: bool = True
 
+    # ─ OAuth Drive upload ─
+    oauth_credentials_json: Path = Field(
+        default=Path("data/credentials/oauth-credentials.json")
+    )
+    oauth_token_json: Path = Field(default=Path("data/credentials/oauth-token.json"))
+    google_oauth_hint: str = ""  # email hint para el selector de cuenta OAuth
+
     # ─ MTC scraper ─
     mtc_credentials_csv: Path = Field(default=Path("data/credentials/rucs.csv"))
     playwright_timeout_ms: int = Field(default=30000, validation_alias="PLAYWRIGHT_TIMEOUT")
@@ -139,7 +146,13 @@ class Settings(BaseSettings):
 
     # ── Validators ─────────────────────────────────────────────
 
-    @field_validator("google_service_account_json", "mtc_credentials_csv", mode="after")
+    @field_validator(
+        "google_service_account_json",
+        "mtc_credentials_csv",
+        "oauth_credentials_json",
+        "oauth_token_json",
+        mode="after",
+    )
     @classmethod
     def _resolve_required_path(cls, v: Path) -> Path:
         """Convierte rutas relativas a absolutas relativas al root."""

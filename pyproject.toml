@@ -21,6 +21,7 @@ dependencies = [
     # ─ Google Workspace ─
     "google-api-python-client>=2.140.0",
     "google-auth>=2.32.0",
+    "google-auth-oauthlib>=1.2.0",
     "gspread>=6.1.0",
     # ─ Modelos / config ─
     "pydantic>=2.8.0",
@@ -32,6 +33,7 @@ dependencies = [
     # ─ Fechas y locale ─
     "babel>=2.16.0",
     "holidays>=0.55",
+    "tzdata>=2024.1",
     # ─ Markdown / YAML / Plantillas ─
     "pyyaml>=6.0",
     "python-slugify>=8.0.0",

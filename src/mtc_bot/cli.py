@@ -12,8 +12,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Annotated
+from zoneinfo import ZoneInfo
 
 import typer
 from rich.console import Console
@@ -233,6 +234,14 @@ def _check_drive(settings: Settings) -> tuple[list[str], list[str]]:
     except Exception as exc:  # noqa: BLE001
         lines.append(f"  {FAIL} No se pudo acceder a la carpeta de Drive: {exc}")
         errors.append(f"Drive inaccesible: {exc}")
+
+    oauth_path = settings.oauth_credentials_json
+    if oauth_path.exists():
+        lines.append(f"  {OK} OAuth credentials (upload): {oauth_path.name}")
+    else:
+        lines.append(
+            f"  {WARN} oauth-credentials.json no encontrado — uploads usarán SA (riesgo 403)"
+        )
     return lines, errors
 
 
@@ -383,6 +392,206 @@ def _load_targets(settings: Settings, ruc: str | None) -> list:
     return targets
 
 
+def _build_sheet_id(ruc: str, notification_id: str) -> str:
+    """Construye el ``id`` único de Sheet combinando RUC y notification_id.
+
+    Formato: ``<ruc>__<notification_id>``. Evita colisiones entre RUCs y es
+    legible al inspeccionar el Sheet.
+    """
+    return f"{ruc}__{notification_id}"
+
+
+def _estimate_vencimiento(fecha_base: date, plazo_dias_habiles: int) -> str:
+    """Estima la fecha de vencimiento dados días hábiles.
+
+    Aproximación simple: 5 días hábiles ≈ 7 días corridos. NO considera
+    feriados peruanos (TODO: integrar ``holidays.Peru()`` cuando se valide
+    la dependencia). Si ``plazo_dias_habiles <= 0``, devuelve string vacío.
+
+    Args:
+        fecha_base: fecha de notificación.
+        plazo_dias_habiles: días hábiles otorgados.
+
+    Returns:
+        Fecha estimada en formato ISO ``YYYY-MM-DD``, o "" si no aplica.
+    """
+    if plazo_dias_habiles <= 0:
+        return ""
+    # Aproximación: avanzar día por día, saltando sábados/domingos.
+    current = fecha_base
+    days_added = 0
+    while days_added < plazo_dias_habiles:
+        current = current + timedelta(days=1)
+        # weekday(): Mon=0 ... Sun=6. Saltamos Sat=5 y Sun=6.
+        if current.weekday() < 5:  # noqa: PLR2004 — 5 = sábado en weekday()
+            days_added += 1
+    return current.isoformat()
+
+
+async def _process_notification(  # noqa: PLR0911,PLR0913,PLR0915 — pipeline lineal con muchos pasos
+    ctx,
+    page,
+    item,
+    creds,
+    settings,
+    downloads_root,
+) -> bool:
+    """Procesa UNA notificación end-to-end.
+
+    Pasos: idempotencia-check → click → metadata → descarga → merge → texto
+    → IA → rename → Drive upload → Sheet append.
+
+    Args:
+        ctx: ``BrowserContext`` activo.
+        page: ``Page`` del inbox (con item visible).
+        item: ``InboxItem`` a procesar.
+        creds: ``RucCredentials`` del RUC.
+        settings: ``Settings`` global.
+        downloads_root: ``Path`` raíz de descargas para este RUC.
+
+    Returns:
+        ``True`` si llegó hasta el append en Sheet, ``False`` si se saltó o
+        falló en algún paso intermedio (no levanta excepciones — todas se
+        capturan y loguean para no abortar el batch).
+    """
+    from mtc_bot.ai_extractor import AIExtractionFailed
+    from mtc_bot.ai_extractor import extract as ai_extract
+    from mtc_bot.google.drive_uploader import upload_pdf
+    from mtc_bot.google.sheets_writer import append_notificacion, notification_exists
+    from mtc_bot.pdf_pipeline import extract_text, merge_pdfs, rename_merged
+    from mtc_bot.scraper.downloader import (
+        download_attachments,
+        extract_detail_metadata,
+    )
+    from mtc_bot.scraper.inbox import click_item
+
+    sheet_id_value = _build_sheet_id(item.ruc, item.notification_id)
+    asunto_short = item.asunto[:50]
+
+    # 1) Idempotencia
+    try:
+        if notification_exists(
+            settings.google_service_account_json,
+            settings.sheet_id,
+            settings.sheet_tab_notificaciones,
+            sheet_id_value,
+        ):
+            console.print(f"    [yellow]⊝[/yellow] {asunto_short} — ya procesada (skip)")
+            return False
+    except Exception as exc:  # noqa: BLE001 — no abortar batch por error de Sheet
+        console.print(f"    [red]✗[/red] {asunto_short}: idempotencia check falló: {exc}")
+        return False
+
+    # 2) Click + 3) metadata
+    try:
+        await click_item(page, item)
+        detail_md = await extract_detail_metadata(page)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"    [red]✗[/red] {asunto_short}: click/metadata falló: {exc}")
+        return False
+
+    # 4) Descarga
+    dest = downloads_root / item.notification_id
+    try:
+        console.print(f"    [download] {asunto_short}...")
+        pdfs = await download_attachments(ctx, page, dest)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"    [red]✗[/red] {asunto_short}: descarga falló: {exc}")
+        return False
+
+    if not pdfs:
+        console.print(f"    [yellow]⚠[/yellow] {asunto_short}: 0 PDFs (skip)")
+        return False
+
+    # 5) Merge (puede fallar si no hay documento principal)
+    try:
+        console.print(f"    [merge] {asunto_short}...")
+        merged_path = merge_pdfs([p.path for p in pdfs], dest / "merged.pdf")
+    except (ValueError, OSError) as exc:
+        console.print(f"    [red]✗[/red] {asunto_short}: merge falló: {exc}")
+        return False
+
+    # 6) Extract text
+    try:
+        texto = extract_text(merged_path)
+    except FileNotFoundError as exc:
+        console.print(f"    [red]✗[/red] {asunto_short}: extract_text falló: {exc}")
+        return False
+
+    # 7) IA
+    try:
+        console.print(f"    [ai] {asunto_short}...")
+        extraction = await ai_extract(texto, settings)
+    except AIExtractionFailed as exc:
+        console.print(f"    [yellow]⚠[/yellow] {asunto_short}: IA falló: {exc} (skip Sheet)")
+        return False
+
+    # 8) Rename
+    rename_seed = extraction.documento or detail_md.asunto or item.asunto
+    try:
+        final_pdf = rename_merged(merged_path, rename_seed)
+    except (FileNotFoundError, OSError) as exc:
+        console.print(f"    [red]✗[/red] {asunto_short}: rename falló: {exc}")
+        return False
+
+    # 9) Upload a Drive
+    try:
+        console.print(f"    [drive] {asunto_short}...")
+        uploaded = upload_pdf(
+            settings.google_service_account_json,
+            settings.drive_root_folder_id,
+            final_pdf,
+            item.ruc,
+            item.fecha,
+            oauth_json_path=settings.oauth_credentials_json,
+            oauth_token_path=settings.oauth_token_json,
+        )
+    except Exception as exc:  # noqa: BLE001 — HttpError u otros
+        console.print(f"    [red]✗[/red] {asunto_short}: Drive upload falló: {exc}")
+        return False
+
+    # 10) Append a Sheet
+    timestamp_proceso = datetime.now(tz=ZoneInfo("America/Lima")).isoformat(
+        timespec="seconds",
+    )
+    plazo_venc = _estimate_vencimiento(item.fecha, extraction.plazo_dias_habiles)
+    row: dict[str, str | int | float | bool | None] = {
+        "id": sheet_id_value,
+        "timestamp_proceso": timestamp_proceso,
+        "fecha_notificacion": item.fecha.isoformat(),
+        "ruc": item.ruc,
+        "empresa": creds.empresa,
+        "documento": extraction.documento or item.asunto,
+        "emisor": extraction.emisor or item.emisor,
+        "asunto": extraction.asunto or item.asunto,
+        "resumen": extraction.resumen,
+        "requiere_respuesta": extraction.requiere_respuesta,
+        "plazo_dias_habiles": extraction.plazo_dias_habiles,
+        "plazo_vencimiento": plazo_venc,
+        "confianza_ia": extraction.confianza,
+        "modelo_ia": extraction.modelo_ia,
+        "drive_file_id": uploaded.file_id,
+        "drive_view_url": uploaded.view_url,
+        "estado": "pendiente",
+    }
+    try:
+        append_notificacion(
+            settings.google_service_account_json,
+            settings.sheet_id,
+            settings.sheet_tab_notificaciones,
+            row,
+        )
+    except Exception as exc:  # noqa: BLE001 — APIError de gspread u otros
+        console.print(f"    [red]✗[/red] {asunto_short}: Sheet append falló: {exc}")
+        return False
+
+    console.print(
+        f"    [green]✓[/green] {asunto_short} → {len(pdfs)} PDF(s), "
+        f"drive={uploaded.file_id[:8]}..."
+    )
+    return True
+
+
 async def _process_one_ruc(  # noqa: PLR0913 — función privada del CLI
     creds,
     since_date,
@@ -390,13 +599,13 @@ async def _process_one_ruc(  # noqa: PLR0913 — función privada del CLI
     dry_run: bool,
     headless: bool,
     downloads_root_base,
+    settings,
 ) -> tuple[int, int]:
-    """Procesa un RUC. Devuelve ``(items_listados, pdfs_descargados)``."""
-    from mtc_bot.scraper.downloader import (
-        download_attachments,
-        extract_detail_metadata,
-    )
-    from mtc_bot.scraper.inbox import click_item, list_inbox
+    """Procesa un RUC. Devuelve ``(items_listados, items_completados)``.
+
+    En ``dry_run`` solo lista items sin descargar ni procesar.
+    """
+    from mtc_bot.scraper.inbox import list_inbox
 
     downloads_root = downloads_root_base / creds.ruc
     async with browser_session(
@@ -418,18 +627,17 @@ async def _process_one_ruc(  # noqa: PLR0913 — función privada del CLI
                 console.print(f"    - [{it.fecha}] {it.asunto[:60]}")
             return len(items), 0
 
-        pdfs_total = 0
+        completados = 0
         for it in items:
             try:
-                await click_item(page, it)
-                _ = await extract_detail_metadata(page)
-                dest = downloads_root / it.notification_id
-                pdfs = await download_attachments(ctx, page, dest)
-                pdfs_total += len(pdfs)
-                console.print(f"    [green]✓[/green] {it.asunto[:50]} → {len(pdfs)} PDF(s)")
+                ok = await _process_notification(
+                    ctx, page, it, creds, settings, downloads_root,
+                )
+                if ok:
+                    completados += 1
             except Exception as exc:  # noqa: BLE001 — seguir con la siguiente
-                console.print(f"    [red]✗[/red] {it.asunto[:50]}: {exc}")
-        return len(items), pdfs_total
+                console.print(f"    [red]✗[/red] {it.asunto[:50]}: error inesperado: {exc}")
+        return len(items), completados
 
 
 @app.command("run")
@@ -458,11 +666,13 @@ def run_cmd(
         typer.Option("--dry-run", help="Solo lista; no descarga PDFs."),
     ] = False,
 ) -> None:
-    """Ciclo end-to-end: login → listar inbox → descargar PDFs.
+    """Ciclo end-to-end completo de Fase 1.
 
-    En esta primera iteración solo descarga PDFs a disco local
-    (``data/downloads/<RUC>/<notification_id>/``). NO procesa con IA ni sube
-    a Drive todavía — esos pasos llegan en hitos siguientes de Fase 1.
+    Pipeline por notificación: login → listar inbox → idempotencia-check →
+    descarga PDFs → merge → extracción texto → IA (DeepSeek + Gemini fallback)
+    → rename → upload a Drive → append al Sheet ``notificaciones``.
+
+    En ``--dry-run`` solo lista items, no descarga ni procesa nada.
     """
     from mtc_bot.config import PROJECT_ROOT
 
@@ -483,17 +693,22 @@ def run_cmd(
         for creds in targets:
             console.print(f"[cyan]→ {creds.empresa}[/cyan]")
             try:
-                listed, downloaded = await _process_one_ruc(
+                listed, completados = await _process_one_ruc(
                     creds,
                     since_date,
                     limit,
                     dry_run,
                     headless,
                     downloads_root_base,
+                    settings,
                 )
-                console.print(
-                    f"  [green]✓[/green] {listed} listadas, {downloaded} PDFs descargados\n"
-                )
+                if dry_run:
+                    console.print(f"  [green]✓[/green] {listed} listadas (dry-run)\n")
+                else:
+                    console.print(
+                        f"  [green]✓[/green] {listed} listadas, "
+                        f"{completados} completadas (Sheet)\n"
+                    )
             except Exception as exc:  # noqa: BLE001 — no abortar batch
                 console.print(f"  [red]✗ Error fatal: {exc}[/red]\n")
 
