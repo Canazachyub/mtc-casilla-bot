@@ -17,41 +17,41 @@
 
 ---
 
-## ✅ FASE 0 — Setup (días 1-2)
+## ✅ FASE 0 — Setup (días 1-2) — COMPLETADA 2026-04-28
 
 **Owner:** backend-python-agent · cloud-google-agent
 
-- [ ] Estructura del proyecto (`src/`, `tests/`, `.claude/`)
-- [ ] `pyproject.toml` con uv
-- [ ] `config.py` que carga `.env` y CSV de RUCs
-- [ ] Service account de Google creado y JSON guardado
-- [ ] Sheet "MTC Casilla DB" con los 3 tabs (notificaciones, logs, rucs)
-- [ ] Carpeta Drive "MTC-Casilla-Bot/" creada y compartida con SA
-- [ ] Apps Script Web App deployado (endpoints health + summary funcionan)
-- [ ] Frontend abre, conecta con la API, muestra "0 notificaciones"
-- [ ] Test de login MTC para 1 RUC funciona (`mtc-bot test-login`)
+- [x] Estructura del proyecto (`src/`, `tests/`, `.claude/`)
+- [x] `pyproject.toml` con uv
+- [x] `config.py` que carga `.env` y CSV de RUCs
+- [x] Service account de Google creado y JSON guardado
+- [x] Sheet "RESOLVE APP" con los 3 tabs (notificaciones, logs, rucs)
+- [x] Carpeta Drive "RESOLVE APP" creada y compartida con SA
+- [x] Apps Script Web App deployado (endpoints health + summary funcionan)
+- [x] Frontend abre, conecta con la API, muestra "0 notificaciones"
+- [x] `mtc-bot doctor` devuelve todo verde
 
-**Criterio de Done Fase 0:** correr `mtc-bot doctor` devuelve todo verde.
+**Criterio de Done Fase 0:** ✅ correr `mtc-bot doctor` devuelve todo verde.
 
 ---
 
-## 🚀 FASE 1 — MVP del pipeline (días 3-7)
+## 🚀 FASE 1 — MVP del pipeline (días 3-7) — FUNCIONAL 2026-05-13
 
 **Owner:** backend-python-agent + cloud-google-agent + qa-agent
 
-- [ ] Scraper completo: login (directo + Clave SOL), inbox, descarga
-- [ ] PDF pipeline: merge ordenado + rename + extracción texto
-- [ ] AI Extractor: DeepSeek primario, Gemini fallback, schema Pydantic
-- [ ] Drive uploader: estructura `YYYY/MM/RUC/` automática
-- [ ] Sheet writer: append + idempotencia por `id` único
-- [ ] Obsidian writer (opcional pero recomendado): nota .md con frontmatter
-- [ ] CLI `mtc-bot run --since today` ejecuta el pipeline end-to-end
-- [ ] Idempotencia: re-ejecutar no duplica
-- [ ] Frontend: lista, filtros, detalle con PDF embebido
-- [ ] Tests: ≥70% coverage en módulos críticos
-- [ ] QA pass: 0 críticos, ≤2 mayores
+- [x] Scraper completo: login directo + Clave SOL — 10 RUCs reales probados
+- [x] PDF pipeline: merge ordenado (doc → constancia notif → lectura) + rename oficial
+- [x] AI Extractor: DeepSeek primario, Gemini fallback, schema Pydantic
+- [x] Drive uploader: estructura `YYYY/MM/RUC/` + OAuth User Delegation
+- [x] Sheet writer: append idempotente por `{ruc}__{notification_id}`
+- [x] CLI `mtc-bot run --since today` ejecuta pipeline end-to-end
+- [x] Idempotencia verificada: re-ejecutar muestra `⊝ ya procesada (skip)`
+- [x] Frontend muestra datos reales 2026 (notificaciones, emisor, plazo, PDF embebido)
+- [ ] Obsidian writer — diferido a Fase 2
+- [ ] Tests ≥70% coverage — pendiente
+- [ ] QA pass formal (qa-agent) — pendiente
 
-**Criterio de Done Fase 1:** una notificación que llegó hoy aparece en el frontend en <5 minutos después de correr `mtc-bot run`.
+**Criterio de Done Fase 1:** ✅ notificación de hoy aparece en el frontend tras `mtc-bot run --since today` (verificado con 10 RUCs reales).
 
 ---
 

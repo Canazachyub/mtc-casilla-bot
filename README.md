@@ -71,9 +71,9 @@
 
 | Fase | Foco | Estado |
 |---|---|---|
-| **0** | Setup, credenciales, Apps Script deploy | 🟡 en curso |
-| **1** | MVP pipeline: notificación → Drive + Sheet + dashboard | ⏳ siguiente |
-| **2** | Sistema de plantillas + propuestas editables | ⏳ |
+| **0** | Setup, credenciales, Apps Script deploy | ✅ completada (2026-04-28) |
+| **1** | MVP pipeline: notificación → Drive + Sheet + dashboard | ✅ funcional (2026-05-13) |
+| **2** | Sistema de plantillas + propuestas editables | 🚀 siguiente |
 | **3** | IA en la nube (regenerar desde el frontend) | ⏳ |
 | **4** | Editor avanzado + exportación Word/PDF + alertas | ⏳ |
 | **5** | Multi-cliente / multi-tenant | 🔮 futuro |

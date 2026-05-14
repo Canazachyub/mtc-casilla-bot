@@ -201,35 +201,45 @@ uv run ruff check src/ && uv run ruff format src/
 | 2026-04-28 | Frontend vanilla JS, sin frameworks | Sin build step, deployable en cualquier estático |
 | 2026-04-28 | 5 sub-agentes especializados con context window propio | Paralelismo + reduce contaminación de contexto |
 | 2026-04-28 | Roadmap por fases incrementales | No improvisar features; cada fase deployable independientemente |
+| 2026-05-13 | OAuth User Delegation para Drive uploads | Service Account no tiene storage quota; usuario OAuth sí |
+| 2026-05-13 | `tzdata` como dep explícita en pyproject.toml | Windows no incluye IANA tz data; `ZoneInfo("America/Lima")` falla sin él |
+| 2026-05-13 | `date.min` fallback para fechas no parseables en inbox | Evita que items con fecha vacía pasen el filtro `--since today` |
 
 ## 11. Estado actual
 
 > **Actualizar al final de cada sesión.**
 
-**Fase actual:** Fase 0 — Setup ✅ **COMPLETADA** (2026-04-28)
-**Próximo paso:** Fase 1 — MVP del pipeline (scraper + PDFs + IA + Drive/Sheet writer + frontend live).
+**Fase actual:** Fase 1 — MVP del pipeline ✅ **FUNCIONAL** (2026-05-13)
+**Próximo paso:** QA pass formal (Fase 1) → Fase 2 (plantillas + propuestas de respuesta).
 
-**Hitos Fase 0 — todos verdes (`mtc-bot doctor` exit 0):**
-- [x] Estructura de carpetas y `pyproject.toml` con uv (deps + extras `dev`, `serve`, `export`)
-- [x] `src/mtc_bot/{config,models,cli}.py` + `google/{sheets_writer,drive_uploader}.py`
-- [x] Service account `mtc-bot-sa@mtc-casilla-bot.iam.gserviceaccount.com` + JSON en `data/credentials/`
-- [x] Sheet "RESOLVE APP" con tabs `notificaciones` (25 cols), `logs` (5), `rucs` (9)
-- [x] Carpeta Drive "RESOLVE APP" compartida con SA (Editor)
-- [x] Apps Script deployado: `https://script.google.com/macros/s/AKfycbwaW_.../exec` — `?action=health` y `?action=summary` OK
-- [x] Frontend localhost:8080 conecta con API, muestra "0 notificaciones" + onboarding con localStorage
-- [x] `_templates/` creado en bóveda Obsidian con README y default `representante_legal=Mirella Shirley Camapaza Quispe`
-- [x] CSV `rucs.csv` con 10 cuentas reales (8 clave_sol + 2 direct)
-- [x] QA: ruff `All checks passed`, pytest `1 passed`, secrets scan limpio
-- [ ] `mtc-bot test-login` con 1 RUC → diferido a Fase 1 (requiere HTML real del portal MTC)
+**Hitos Fase 0 — completados (2026-04-28):**
+- [x] Estructura, `pyproject.toml`, `config.py`, `models.py`, `cli.py`
+- [x] Service account + Sheet "RESOLVE APP" (3 tabs) + Drive + Apps Script
+- [x] Frontend localhost:8080 + `mtc-bot doctor` verde
 
-**Pendientes para Fase 1:**
-1. Verificar HTML real del portal MTC (login directo + Clave SOL) con DevTools.
-2. Implementar `scraper/{login,inbox,downloader}.py` con selectores reales.
-3. `pdf_pipeline.py` (merge + extracción).
-4. `ai_extractor.py` (DeepSeek + Gemini fallback).
-5. `obsidian_writer.py` (notas .md).
-6. Tests con HAR/respx.
-7. CLI `mtc-bot run` end-to-end.
+**Hitos Fase 1 — completados (2026-05-13):**
+- [x] `scraper/login.py`: login directo (PERSONA JURÍDICA) + Clave SOL — 10 RUCs reales OK
+- [x] `scraper/inbox.py`: listado, paginación, date parser ("Hoy"/"Ayer"/DD-MM-YYYY), early termination, `_navigate_to_page`
+- [x] `scraper/downloader.py`: descarga de 3 adjuntos por notificación vía Playwright
+- [x] `pdf_pipeline.py`: merge ordenado (doc principal → constancia notif → constancia lectura) + rename con nombre oficial
+- [x] `ai_extractor.py`: DeepSeek primario (JSON estructurado), Gemini fallback automático
+- [x] `google/drive_uploader.py`: estructura `YYYY/MM/RUC/` + OAuth User Delegation para storage
+- [x] `google/sheets_writer.py`: append idempotente por `{ruc}__{notification_id[:16]}`
+- [x] `cli.py`: `mtc-bot run --since today/all` end-to-end en 10 RUCs reales
+- [x] Idempotencia verificada: re-ejecución muestra `⊝ ya procesada (skip)`
+- [x] Frontend muestra notificaciones reales 2026 con metadata + link Drive
+- [x] Screenshots automáticas en modo headed (`playwright-screenshots/{ruc}/`)
+- [ ] `obsidian_writer.py` — diferido a Fase 2
+- [ ] Tests ≥70% coverage — pendiente QA pass formal
+
+**Pendientes para Fase 2:**
+1. QA pass formal de Fase 1 (ruff + pytest + security scan).
+2. 5 plantillas reales en `_templates/` (Obsidian).
+3. `response_generator.py`: scoring TF-IDF + matcher + fill IA.
+4. `mtc-bot templates sync` (Obsidian → Drive).
+5. Sheet: columnas `template_id`, `propuesta_respuesta`, `propuesta_calidad`, `estado_propuesta`.
+6. Frontend: modal con propuesta editable + botones Guardar/Aprobar/Copiar.
+7. `obsidian_writer.py`: nota .md con frontmatter por notificación procesada.
 
 ## 12. Glosario
 
