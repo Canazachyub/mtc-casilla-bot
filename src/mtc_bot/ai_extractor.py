@@ -258,9 +258,7 @@ async def extract(texto: str, settings: Settings | None = None) -> ExtractionRes
             deepseek_error,
             gemini_error,
         )
-        raise AIExtractionFailed(
-            f"DeepSeek: {deepseek_error} | Gemini: {gemini_error}"
-        ) from exc
+        raise AIExtractionFailed(f"DeepSeek: {deepseek_error} | Gemini: {gemini_error}") from exc
     except Exception as exc:  # noqa: BLE001 — capturar cualquier error remanente
         gemini_error = f"{type(exc).__name__}: {exc}"
         logger.error(
@@ -268,6 +266,4 @@ async def extract(texto: str, settings: Settings | None = None) -> ExtractionRes
             deepseek_error,
             gemini_error,
         )
-        raise AIExtractionFailed(
-            f"DeepSeek: {deepseek_error} | Gemini: {gemini_error}"
-        ) from exc
+        raise AIExtractionFailed(f"DeepSeek: {deepseek_error} | Gemini: {gemini_error}") from exc

@@ -364,8 +364,7 @@ async def login_clave_sol(page: Page, creds: RucCredentials) -> None:
     """
     if creds.auth_method != "clave_sol":
         raise ValueError(
-            f"login_clave_sol requiere auth_method='clave_sol', "
-            f"recibido: {creds.auth_method!r}"
+            f"login_clave_sol requiere auth_method='clave_sol', recibido: {creds.auth_method!r}"
         )
     if not creds.sol_usuario or not creds.sol_clave:
         raise ValueError(
@@ -386,14 +385,11 @@ async def login_clave_sol(page: Page, creds: RucCredentials) -> None:
         await page.wait_for_url(f"**{SUNAT_HOST_FRAGMENT}**", timeout=LOGIN_NAV_TIMEOUT_MS)
     except PlaywrightTimeoutError as exc:
         raise LoginFailed(
-            f"RUC {masked}: timeout esperando redirect a SUNAT "
-            f"(url actual={page.url})"
+            f"RUC {masked}: timeout esperando redirect a SUNAT (url actual={page.url})"
         ) from exc
 
     # 4. Asegurar tab RUC activo y campo visible
-    await page.wait_for_selector(
-        SUNAT_SEL_INPUT_RUC, state="visible", timeout=DEFAULT_TIMEOUT_MS
-    )
+    await page.wait_for_selector(SUNAT_SEL_INPUT_RUC, state="visible", timeout=DEFAULT_TIMEOUT_MS)
     tab_ruc = page.locator(SUNAT_SEL_TAB_RUC).first
     classes = (await tab_ruc.get_attribute("class")) or ""
     if "active" not in classes:
@@ -430,16 +426,12 @@ async def login_clave_sol(page: Page, creds: RucCredentials) -> None:
         if SUNAT_HOST_FRAGMENT in current_url:
             err_text = await _read_sunat_error(page)
             if err_text:
-                raise LoginFailed(
-                    f"RUC {masked}: SUNAT rechazó credenciales: {err_text}"
-                ) from exc
+                raise LoginFailed(f"RUC {masked}: SUNAT rechazó credenciales: {err_text}") from exc
             raise LoginFailed(
-                f"RUC {masked}: SUNAT no completó autenticación "
-                f"(url={current_url})"
+                f"RUC {masked}: SUNAT no completó autenticación (url={current_url})"
             ) from exc
         raise LoginFailed(
-            f"RUC {masked}: timeout esperando UI MTC post-SUNAT "
-            f"(url={current_url})"
+            f"RUC {masked}: timeout esperando UI MTC post-SUNAT (url={current_url})"
         ) from exc
 
     # 9. Sanity check final

@@ -432,7 +432,9 @@ async def download_attachments(
             initial_count = len(captured)
 
             popup_url = await _click_attachment_with_popup_fallback(
-                context, page, att_locs.nth(i),
+                context,
+                page,
+                att_locs.nth(i),
             )
 
             url: str | None = None

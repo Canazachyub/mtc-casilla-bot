@@ -90,7 +90,10 @@ def _get_worksheet(client: gspread.Client, sheet_id: str, tab_name: str):
 
 
 def notification_exists(
-    sa_json_path: Path, sheet_id: str, tab: str, notification_id: str,
+    sa_json_path: Path,
+    sheet_id: str,
+    tab: str,
+    notification_id: str,
 ) -> bool:
     """Devuelve ``True`` si ya existe una fila en ``tab`` cuyo ``id`` matchea.
 

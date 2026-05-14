@@ -118,9 +118,7 @@ class Settings(BaseSettings):
     enable_obsidian_writer: bool = True
 
     # ─ OAuth Drive upload ─
-    oauth_credentials_json: Path = Field(
-        default=Path("data/credentials/oauth-credentials.json")
-    )
+    oauth_credentials_json: Path = Field(default=Path("data/credentials/oauth-credentials.json"))
     oauth_token_json: Path = Field(default=Path("data/credentials/oauth-token.json"))
     google_oauth_hint: str = ""  # email hint para el selector de cuenta OAuth
 

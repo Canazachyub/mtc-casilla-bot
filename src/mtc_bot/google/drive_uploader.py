@@ -34,8 +34,18 @@ _OAUTH_SCOPES = ["https://www.googleapis.com/auth/drive"]
 _FOLDER_MIME = "application/vnd.google-apps.folder"
 
 _MONTH_NAMES_ES = (
-    "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
-    "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+    "Enero",
+    "Febrero",
+    "Marzo",
+    "Abril",
+    "Mayo",
+    "Junio",
+    "Julio",
+    "Agosto",
+    "Septiembre",
+    "Octubre",
+    "Noviembre",
+    "Diciembre",
 )
 
 
@@ -131,11 +141,7 @@ def _find_or_create_folder(service, name: str, parent_id: str) -> str:
         f"mimeType = '{_FOLDER_MIME}' and "
         f"trashed = false"
     )
-    resp = (
-        service.files()
-        .list(q=query, fields="files(id, name)", spaces="drive")
-        .execute()
-    )
+    resp = service.files().list(q=query, fields="files(id, name)", spaces="drive").execute()
     items = resp.get("files", [])
     if items:
         return items[0]["id"]

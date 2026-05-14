@@ -594,8 +594,7 @@ async def _process_notification(  # noqa: PLR0911,PLR0912,PLR0913,PLR0915 — pi
         return False
 
     console.print(
-        f"    [green]✓[/green] {asunto_short} → {len(pdfs)} PDF(s), "
-        f"drive={uploaded.file_id[:8]}..."
+        f"    [green]✓[/green] {asunto_short} → {len(pdfs)} PDF(s), drive={uploaded.file_id[:8]}..."
     )
     return True
 
@@ -656,7 +655,12 @@ async def _process_one_ruc(  # noqa: PLR0913 — función privada del CLI
         for it in items:
             try:
                 ok = await _process_notification(
-                    ctx, page, it, creds, settings, downloads_root,
+                    ctx,
+                    page,
+                    it,
+                    creds,
+                    settings,
+                    downloads_root,
                     shots_dir=shots_dir if not headless else None,
                 )
                 if ok:
@@ -732,8 +736,7 @@ def run_cmd(
                     console.print(f"  [green]✓[/green] {listed} listadas (dry-run)\n")
                 else:
                     console.print(
-                        f"  [green]✓[/green] {listed} listadas, "
-                        f"{completados} completadas (Sheet)\n"
+                        f"  [green]✓[/green] {listed} listadas, {completados} completadas (Sheet)\n"
                     )
             except Exception as exc:  # noqa: BLE001 — no abortar batch
                 console.print(f"  [red]✗ Error fatal: {exc}[/red]\n")
