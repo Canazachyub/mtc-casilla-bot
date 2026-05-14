@@ -13,6 +13,7 @@ import asyncio
 import logging
 import sys
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Annotated
 from zoneinfo import ZoneInfo
 
@@ -428,13 +429,14 @@ def _estimate_vencimiento(fecha_base: date, plazo_dias_habiles: int) -> str:
     return current.isoformat()
 
 
-async def _process_notification(  # noqa: PLR0911,PLR0913,PLR0915 — pipeline lineal con muchos pasos
+async def _process_notification(  # noqa: PLR0911,PLR0912,PLR0913,PLR0915 — pipeline lineal con muchos pasos
     ctx,
     page,
     item,
     creds,
     settings,
     downloads_root,
+    shots_dir=None,
 ) -> bool:
     """Procesa UNA notificación end-to-end.
 
@@ -485,6 +487,8 @@ async def _process_notification(  # noqa: PLR0911,PLR0913,PLR0915 — pipeline l
     # 2) Click + 3) metadata
     try:
         await click_item(page, item)
+        if shots_dir is not None:
+            await _take_screenshot(page, shots_dir / f"{item.notification_id}_detail.png", "detail")
         detail_md = await extract_detail_metadata(page)
     except Exception as exc:  # noqa: BLE001
         console.print(f"    [red]✗[/red] {asunto_short}: click/metadata falló: {exc}")
@@ -495,6 +499,10 @@ async def _process_notification(  # noqa: PLR0911,PLR0913,PLR0915 — pipeline l
     try:
         console.print(f"    [download] {asunto_short}...")
         pdfs = await download_attachments(ctx, page, dest)
+        if shots_dir is not None:
+            await _take_screenshot(
+                page, shots_dir / f"{item.notification_id}_attachments.png", "attachments"
+            )
     except Exception as exc:  # noqa: BLE001
         console.print(f"    [red]✗[/red] {asunto_short}: descarga falló: {exc}")
         return False
@@ -592,6 +600,16 @@ async def _process_notification(  # noqa: PLR0911,PLR0913,PLR0915 — pipeline l
     return True
 
 
+async def _take_screenshot(page, path: Path, label: str) -> None:
+    """Guarda captura de pantalla ignorando errores (no aborta el pipeline)."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        await page.screenshot(path=str(path), full_page=False)
+        logger.debug("Screenshot guardado: %s", path.name)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Screenshot falló (%s): %s", label, exc)
+
+
 async def _process_one_ruc(  # noqa: PLR0913 — función privada del CLI
     creds,
     since_date,
@@ -605,9 +623,11 @@ async def _process_one_ruc(  # noqa: PLR0913 — función privada del CLI
 
     En ``dry_run`` solo lista items sin descargar ni procesar.
     """
+    from mtc_bot.config import PROJECT_ROOT
     from mtc_bot.scraper.inbox import list_inbox
 
     downloads_root = downloads_root_base / creds.ruc
+    shots_dir = PROJECT_ROOT / "playwright-screenshots" / creds.ruc
     async with browser_session(
         headless=headless,
         downloads_path=downloads_root,
@@ -617,7 +637,12 @@ async def _process_one_ruc(  # noqa: PLR0913 — función privada del CLI
             await perform_login(page, creds)
         except (LoginFailed, NotImplementedError) as exc:
             console.print(f"  [red]✗[/red] {creds.ruc[:5]}*** login falló: {exc}")
+            if not headless:
+                await _take_screenshot(page, shots_dir / "login_failed.png", "login_failed")
             return 0, 0
+
+        if not headless:
+            await _take_screenshot(page, shots_dir / "inbox.png", "inbox")
 
         items = await list_inbox(page, creds.ruc, since=since_date, limit=limit)
         console.print(f"  {creds.empresa[:40]}: {len(items)} notif para procesar")
@@ -632,6 +657,7 @@ async def _process_one_ruc(  # noqa: PLR0913 — función privada del CLI
             try:
                 ok = await _process_notification(
                     ctx, page, it, creds, settings, downloads_root,
+                    shots_dir=shots_dir if not headless else None,
                 )
                 if ok:
                     completados += 1

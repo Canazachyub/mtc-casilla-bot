@@ -7,11 +7,12 @@ orquestador decida cuáles descargar.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 import re
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from playwright.async_api import Page
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
@@ -30,6 +31,8 @@ SEL_CATEGORIA = ".etiqueta-categoria"
 SEL_ICONO_ADJUNTO = ".icono-adjunto"
 SEL_PAG_RANGE = ".mat-mdc-paginator-range-label"
 SEL_PAG_NEXT = ".mat-mdc-paginator-navigation-next"
+SEL_PAG_PREV = ".mat-mdc-paginator-navigation-previous"
+SEL_PAG_FIRST = ".mat-mdc-paginator-navigation-first"
 
 # Detalle (post-click)
 SEL_DETAIL_TITLE = "app-partial-detalle-notificacion mat-card-title"
@@ -102,12 +105,32 @@ def notification_id(ruc: str, asunto: str, fecha: date) -> str:
 
 
 def _parse_fecha_dmy(text: str) -> date | None:
-    """Parsea ``DD/MM/YYYY`` a ``date``. Devuelve ``None`` si no matchea."""
+    """Parsea la fecha del inbox a ``date``.
+
+    Soporta: ``DD/MM/YYYY``, ``"Hoy"`` (hoy), ``"Ayer"`` (ayer) y strings
+    que contienen ``DD/MM/YYYY`` como subcadena (ej. ``"13/05/2026 19:35"``).
+    Devuelve ``None`` si no matchea ningún formato.
+    """
     text = (text or "").strip()
+    if not text:
+        return None
+    lower = text.lower()
+    if lower == "hoy":
+        return date.today()
+    if lower == "ayer":
+        return date.today() - timedelta(days=1)
     try:
         return datetime.strptime(text, "%d/%m/%Y").date()
     except ValueError:
-        return None
+        pass
+    # Fallback: extraer DD/MM/YYYY de strings más largos (ej. con hora)
+    m = re.search(r"\d{2}/\d{2}/\d{4}", text)
+    if m:
+        try:
+            return datetime.strptime(m.group(), "%d/%m/%Y").date()
+        except ValueError:
+            pass
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -176,7 +199,13 @@ async def _read_items_in_current_page(
             item_loc.locator(SEL_CATEGORIA).first,
         )
         has_adjunto = await item_loc.locator(SEL_ICONO_ADJUNTO).count() > 0
-        fecha = _parse_fecha_dmy(raw_fecha) or date.today()
+        fecha_parsed = _parse_fecha_dmy(raw_fecha)
+        if fecha_parsed is None:
+            logger.debug("Fecha no parseada: %r (item %d pág %d)", raw_fecha, i, page_index)
+        fecha = fecha_parsed or date.min  # date.min = año 1 → nunca pasa filtro since=today
+        logger.debug(
+            "Item %d pág %d: raw_fecha=%r → %s | %s", i, page_index, raw_fecha, fecha, asunto[:40]
+        )
         nid = notification_id(ruc, asunto, fecha)
         items.append(
             InboxItem(
@@ -247,6 +276,13 @@ async def list_inbox(
 
         if not await _is_next_page_enabled(page):
             break
+
+        # Early termination: si TODOS los items de esta página son anteriores a
+        # `since`, el inbox (orden desc) no tendrá más items relevantes.
+        if since and page_items and all(it.fecha < since for it in page_items):
+            logger.debug("Early stop: pág %d toda anterior a %s", page_index, since)
+            break
+
         await page.locator(SEL_PAG_NEXT).first.click()
         try:
             await page.wait_for_load_state("networkidle", timeout=_DEFAULT_PAGINATOR_TIMEOUT)
@@ -258,13 +294,61 @@ async def list_inbox(
     return all_items
 
 
+async def _navigate_to_page(page: Page, target_page: int) -> None:
+    """Navega al paginator hasta la página ``target_page`` (1-indexed).
+
+    Primero va a la página 1 usando el botón "first" (si existe) o con Previous
+    repetido, luego avanza con Next hasta llegar a ``target_page``.
+    """
+    if target_page == 1:
+        first_btn = page.locator(SEL_PAG_FIRST).first
+        try:
+            disabled = await first_btn.get_attribute("disabled", timeout=2000)
+            if disabled is None:
+                await first_btn.click()
+                await page.wait_for_load_state("networkidle", timeout=_DEFAULT_PAGINATOR_TIMEOUT)
+        except PlaywrightTimeoutError:
+            pass
+        return
+
+    # Ir a página 1 vía "first" o Previous repetido
+    first_btn = page.locator(SEL_PAG_FIRST).first
+    try:
+        disabled = await first_btn.get_attribute("disabled", timeout=2000)
+        if disabled is None:
+            await first_btn.click()
+            await page.wait_for_load_state("networkidle", timeout=_DEFAULT_PAGINATOR_TIMEOUT)
+    except PlaywrightTimeoutError:
+        # Sin botón "first": retroceder hasta que Previous esté deshabilitado
+        for _ in range(50):
+            prev_btn = page.locator(SEL_PAG_PREV).first
+            try:
+                disabled = await prev_btn.get_attribute("disabled", timeout=1000)
+            except PlaywrightTimeoutError:
+                break
+            if disabled is not None:
+                break
+            await prev_btn.click()
+            await page.wait_for_load_state("networkidle", timeout=_DEFAULT_PAGINATOR_TIMEOUT)
+
+    # Avanzar hasta target_page
+    for _ in range(target_page - 1):
+        await page.locator(SEL_PAG_NEXT).first.click()
+        with contextlib.suppress(PlaywrightTimeoutError):
+            await page.wait_for_load_state("networkidle", timeout=_DEFAULT_PAGINATOR_TIMEOUT)
+
+
 async def click_item(page: Page, item: InboxItem) -> None:
     """Hace clic en el ``item-notificacion`` y espera que cargue el detalle.
+
+    Navega a la página correcta del paginator antes de hacer click, para que
+    el índice ``item_index_in_page`` apunte al item correcto.
 
     Args:
         page: Page con la lista del inbox visible.
         item: ``InboxItem`` previamente devuelto por ``list_inbox``.
     """
+    await _navigate_to_page(page, item.page_index)
     items_loc = page.locator(SEL_ITEM)
     target = items_loc.nth(item.item_index_in_page)
     await target.scroll_into_view_if_needed()
