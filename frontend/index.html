@@ -10,8 +10,11 @@
 
 <header>
   <div class="header-left">
-    <h1>📬 MTC Casilla Bot</h1>
-    <span class="header-subtitle">Sistema de Notificaciones SUTRAN / MTC</span>
+    <div class="header-logo">📬</div>
+    <div>
+      <h1>MTC Casilla Bot</h1>
+      <span class="header-subtitle">SUTRAN / MTC — Notificaciones electrónicas</span>
+    </div>
   </div>
   <div class="header-actions">
     <span id="last-update" class="muted"></span>
@@ -46,37 +49,53 @@
 <!-- Dashboard -->
 <div id="dashboard" class="hidden">
 
+  <!-- Métricas -->
   <section class="metrics" id="metrics">
     <div class="metric">
-      <span class="value" id="m-total">—</span>
-      <span class="label">Total</span>
+      <span class="metric-value" id="m-total">—</span>
+      <span class="metric-label">Total</span>
     </div>
-    <div class="metric pendiente">
-      <span class="value" id="m-pendientes">—</span>
-      <span class="label">Pendientes</span>
+    <div class="metric metric-pendiente">
+      <span class="metric-value" id="m-pendientes">—</span>
+      <span class="metric-label">Pendientes</span>
     </div>
-    <div class="metric vencido">
-      <span class="value" id="m-vencidos">—</span>
-      <span class="label">Vencidos</span>
+    <div class="metric metric-vencido">
+      <span class="metric-value" id="m-vencidos">—</span>
+      <span class="metric-label">Vencidos</span>
     </div>
-    <div class="metric hoy">
-      <span class="value" id="m-hoy">—</span>
-      <span class="label">Hoy</span>
+    <div class="metric metric-hoy">
+      <span class="metric-value" id="m-empresas">—</span>
+      <span class="metric-label">Empresas activas</span>
     </div>
   </section>
 
-  <section class="filters">
+  <!-- Vista nav tabs -->
+  <nav class="view-nav">
+    <button class="view-tab active" data-view="pending">
+      <span class="view-tab-icon">📋</span>
+      Tareas pendientes
+      <span class="vtab-badge" id="vtab-pending-badge"></span>
+    </button>
+    <button class="view-tab" data-view="all">
+      <span class="view-tab-icon">☰</span>
+      Todas las notificaciones
+      <span class="vtab-badge" id="vtab-all-badge"></span>
+    </button>
+  </nav>
+
+  <!-- Filtros -->
+  <section class="filters" id="filters-bar">
     <input type="search" id="filter-search" placeholder="🔎 Buscar (documento, empresa, asunto, tarea)...">
     <select id="filter-sede"><option value="">Todas las sedes</option></select>
-    <select id="filter-progreso">
-      <option value="">Todos los progresos</option>
+    <select id="filter-progreso" class="filter-all-only">
+      <option value="">Todos los estados</option>
       <option value="NO INICIADO">No iniciado</option>
       <option value="AGENDAR">Agendar</option>
       <option value="EN REVISIÓN">En revisión</option>
       <option value="PRESENTADO">Presentado</option>
     </select>
-    <label class="check"><input type="checkbox" id="filter-pendientes"> Solo pendientes</label>
-    <input type="date" id="filter-since" title="Desde">
+    <label class="check filter-all-only"><input type="checkbox" id="filter-pendientes"> Solo pendientes</label>
+    <input type="date" id="filter-since" title="Desde fecha">
   </section>
 
   <main>
@@ -96,27 +115,39 @@
       </div>
     </div>
 
-    <table id="notif-table" class="hidden">
-      <thead>
-        <tr>
-          <th>Progreso</th>
-          <th>Fecha</th>
-          <th>Documento</th>
-          <th>Empresa / Sede</th>
-          <th>Tarea</th>
-          <th>Plazo</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody id="notif-tbody"></tbody>
-    </table>
-
-    <div id="empty-filtered" class="empty hidden">
-      No hay notificaciones que coincidan con los filtros.
+    <!-- Vista: Tareas pendientes (agrupadas por empresa) -->
+    <div id="view-pending">
+      <div id="pending-groups"></div>
+      <div id="empty-pending" class="empty hidden">
+        <p>✅ Sin tareas pendientes</p>
+        <p class="muted small">Todas las notificaciones están presentadas o archivadas.</p>
+      </div>
     </div>
-    <div id="empty-api" class="empty hidden">
-      <p>✅ Conectado a la API · Aún no hay notificaciones procesadas.</p>
-      <p class="muted small">Cuando el bot Python procese su primera notificación, aparecerá acá.</p>
+
+    <!-- Vista: Todas las notificaciones (tabla) -->
+    <div id="view-all" class="hidden">
+      <table id="notif-table" class="hidden">
+        <thead>
+          <tr>
+            <th>Progreso</th>
+            <th>Fecha</th>
+            <th>Documento</th>
+            <th>Empresa / Sede</th>
+            <th>Tarea</th>
+            <th>Plazo</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="notif-tbody"></tbody>
+      </table>
+
+      <div id="empty-filtered" class="empty hidden">
+        No hay notificaciones que coincidan con los filtros.
+      </div>
+      <div id="empty-api" class="empty hidden">
+        <p>✅ Conectado a la API · Aún no hay notificaciones procesadas.</p>
+        <p class="muted small">Cuando el bot Python procese su primera notificación, aparecerá acá.</p>
+      </div>
     </div>
   </main>
 

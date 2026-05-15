@@ -1,20 +1,11 @@
 /* ════════════════════════════════════════════════════════════════
-   MTC Casilla Bot — Frontend v3
-   Consume la API REST de Apps Script (acción GET, params por URL).
-   API_URL se guarda en localStorage (clave: mtc_bot_api_url).
+   MTC Casilla Bot — Frontend v4
+   Vistas: Tareas pendientes (agrupadas por empresa) + Todas
+   API: Apps Script REST (localStorage: mtc_bot_api_url)
    ════════════════════════════════════════════════════════════════ */
 
 const STORAGE_KEY    = 'mtc_bot_api_url';
 const API_URL_PREFIX = 'https://script.google.com/macros/';
-
-const ALLOWED_ESTADOS = ['pendiente', 'en-proceso', 'completado', 'informativo', 'archivada'];
-const ESTADO_LABELS   = {
-  pendiente:    'Pendiente',
-  'en-proceso': 'En proceso',
-  completado:   'Completado',
-  informativo:  'Informativo',
-  archivada:    'Archivada',
-};
 
 const ALLOWED_PROGRESO = ['NO INICIADO', 'AGENDAR', 'EN REVISIÓN', 'PRESENTADO'];
 const PROGRESO_LABELS  = {
@@ -31,9 +22,10 @@ const PROGRESO_CSS = {
 };
 
 const state = {
-  apiUrl: '',
-  items:     [],
-  filtered:  [],
+  apiUrl:  '',
+  view:    'pending',       // 'pending' | 'all'
+  items:   [],
+  filtered: [],
   templates: [],
   currentDetailId: null,
   currentDetail:   null,
@@ -88,7 +80,6 @@ async function loadTemplates() {
 async function loadAll() {
   showLoading(true);
   hideErrorCard();
-  hideEmptyApi();
 
   try {
     const [summary, list] = await Promise.all([
@@ -113,13 +104,21 @@ async function loadAll() {
   }
 }
 
-/* ──────────────────────────── Render metrics ──────────────────── */
+/* ──────────────────────────── Métricas ────────────────────────── */
 
 function renderMetrics(s) {
-  document.getElementById('m-total').textContent      = s.total      ?? 0;
-  document.getElementById('m-pendientes').textContent  = s.pendientes ?? 0;
-  document.getElementById('m-vencidos').textContent    = s.vencidos   ?? 0;
-  document.getElementById('m-hoy').textContent         = s.hoy        ?? 0;
+  document.getElementById('m-total').textContent     = s.total      ?? 0;
+  document.getElementById('m-pendientes').textContent = s.pendientes ?? 0;
+  document.getElementById('m-vencidos').textContent   = s.vencidos   ?? 0;
+
+  // Empresas con items pendientes (calculado del lado cliente)
+  const empresasActivas = new Set(
+    state.items
+      .filter(i => i.progreso !== 'PRESENTADO')
+      .map(i => i.empresa)
+      .filter(Boolean)
+  );
+  document.getElementById('m-empresas').textContent = empresasActivas.size || '—';
 }
 
 function populateSedeFilter(items) {
@@ -127,6 +126,23 @@ function populateSedeFilter(items) {
   const sedes = [...new Set(items.map(i => i.sede).filter(Boolean))].sort();
   sel.innerHTML = '<option value="">Todas las sedes</option>' +
     sedes.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+}
+
+/* ──────────────────────────── View tabs ───────────────────────── */
+
+function switchView(viewId) {
+  state.view = viewId;
+  document.querySelectorAll('.view-tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.view === viewId)
+  );
+  const allOnlyEls = document.querySelectorAll('.filter-all-only');
+  allOnlyEls.forEach(el => {
+    el.style.opacity = viewId === 'all' ? '1' : '0.4';
+    el.style.pointerEvents = viewId === 'all' ? '' : 'none';
+  });
+  document.getElementById('view-pending').classList.toggle('hidden', viewId !== 'pending');
+  document.getElementById('view-all').classList.toggle('hidden', viewId !== 'all');
+  applyFilters();
 }
 
 /* ──────────────────────────── Filtros ─────────────────────────── */
@@ -145,32 +161,219 @@ function applyFilters() {
       (i.tarea     || '').toLowerCase().includes(q)
     );
   }
-  if (f.sede)    data = data.filter(i => i.sede === f.sede);
-  if (f.progreso) data = data.filter(i => i.progreso === f.progreso);
-  if (f.soloPendientes) {
-    data = data.filter(i =>
-      i.progreso === 'NO INICIADO' || i.progreso === 'AGENDAR'
-    );
+  if (f.sede) data = data.filter(i => i.sede === f.sede);
+
+  if (state.view === 'all') {
+    if (f.progreso) data = data.filter(i => i.progreso === f.progreso);
+    if (f.soloPendientes) {
+      data = data.filter(i => i.progreso === 'NO INICIADO' || i.progreso === 'AGENDAR');
+    }
   }
+
   if (f.since) {
     const since = new Date(f.since);
     data = data.filter(i => i.fecha_notificacion && new Date(i.fecha_notificacion) >= since);
   }
 
   state.filtered = data;
-  renderTable(data);
+  updateViewBadges(data);
+
+  if (state.view === 'pending') {
+    renderPendingView(data);
+  } else {
+    renderTable(data);
+  }
 }
 
-/* ──────────────────────────── Tabla ───────────────────────────── */
+function updateViewBadges(allFiltered) {
+  const totalCount   = allFiltered.length;
+  const pendingCount = allFiltered.filter(
+    i => i.progreso !== 'PRESENTADO' && i.progreso !== 'archivada'
+  ).length;
+
+  const badgePending = document.getElementById('vtab-pending-badge');
+  const badgeAll     = document.getElementById('vtab-all-badge');
+  if (badgePending) badgePending.textContent = pendingCount || '';
+  if (badgeAll)     badgeAll.textContent     = totalCount   || '';
+}
+
+/* ──────────────────────────── Pending view ────────────────────── */
+
+function itemUrgencyScore(item) {
+  if (item.plazo_vencido === true || parseInt(item.dias_restantes) < 0) return 100;
+  const d = parseInt(item.dias_restantes);
+  if (isNaN(d)) return 0;
+  if (d <= 1)  return 60;
+  if (d <= 3)  return 30;
+  if (d <= 7)  return 10;
+  return 1;
+}
+
+function groupUrgencyScore(items) {
+  return items.reduce((max, i) => Math.max(max, itemUrgencyScore(i)), 0);
+}
+
+function cardUrgencyClass(item) {
+  const score = itemUrgencyScore(item);
+  if (score >= 100) return 'card-vencido';
+  if (score >= 60)  return 'card-urgente';
+  if (score >= 30)  return 'card-alerta';
+  if (score >= 1)   return 'card-normal';
+  return '';
+}
+
+function companyCountClass(items) {
+  const score = groupUrgencyScore(items);
+  if (score >= 100) return 'company-count-vencido';
+  if (score >= 60)  return 'company-count-urgente';
+  if (score >= 30)  return 'company-count-alerta';
+  return 'company-count-normal';
+}
+
+function renderPendingView(allItems) {
+  const groups  = document.getElementById('pending-groups');
+  const emptyEl = document.getElementById('empty-pending');
+
+  const pending = allItems.filter(
+    i => i.progreso !== 'PRESENTADO' && i.progreso !== 'archivada'
+  );
+
+  if (pending.length === 0) {
+    groups.innerHTML = '';
+    emptyEl.classList.remove('hidden');
+    return;
+  }
+  emptyEl.classList.add('hidden');
+
+  // Agrupar por empresa
+  const groupMap = new Map();
+  pending.forEach(item => {
+    const key = (item.empresa || 'Sin empresa').trim();
+    if (!groupMap.has(key)) {
+      groupMap.set(key, {
+        empresa: key,
+        ruc:  item.ruc  || '',
+        sede: item.sede || '',
+        items: [],
+      });
+    }
+    groupMap.get(key).items.push(item);
+  });
+
+  // Ordenar grupos: mayor urgencia primero
+  const sorted = [...groupMap.values()].sort(
+    (a, b) => groupUrgencyScore(b.items) - groupUrgencyScore(a.items)
+  );
+
+  // Ordenar items dentro de cada grupo
+  sorted.forEach(g => {
+    g.items.sort((a, b) => itemUrgencyScore(b) - itemUrgencyScore(a));
+  });
+
+  groups.innerHTML = sorted.map(g => renderCompanyGroup(g)).join('');
+
+  // Bind: colapsar / expandir grupos
+  groups.querySelectorAll('.company-group-header').forEach(header => {
+    header.addEventListener('click', () =>
+      header.closest('.company-group').classList.toggle('collapsed')
+    );
+  });
+
+  // Bind: botones detalle
+  groups.querySelectorAll('.btn-detail').forEach(btn =>
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      openDetail(btn.dataset.id);
+    })
+  );
+
+  // Bind: progreso selects
+  groups.querySelectorAll('select.select-progreso').forEach(sel =>
+    sel.addEventListener('change', e => {
+      e.stopPropagation();
+      handleProgresoChange(sel.dataset.id, sel.value);
+    })
+  );
+}
+
+function renderCompanyGroup(group) {
+  const { empresa, ruc, sede, items } = group;
+  const n          = items.length;
+  const cntClass   = companyCountClass(items);
+  const metaParts  = [
+    ruc  ? `RUC ${ruc}`      : '',
+    sede ? `📍 ${sede}` : '',
+  ].filter(Boolean);
+
+  return `
+    <div class="company-group" data-empresa="${escapeHtml(empresa)}">
+      <div class="company-group-header">
+        <div class="company-group-left">
+          <span class="company-group-name">${escapeHtml(empresa)}</span>
+          ${metaParts.length ? `<span class="company-group-meta">${escapeHtml(metaParts.join(' · '))}</span>` : ''}
+        </div>
+        <div class="company-group-right">
+          <span class="company-count ${cntClass}">${n} pendiente${n !== 1 ? 's' : ''}</span>
+          <span class="group-toggle-icon">▼</span>
+        </div>
+      </div>
+      <div class="company-group-body">
+        ${items.map(i => renderNotifCard(i)).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderNotifCard(item) {
+  const urgClass = cardUrgencyClass(item);
+  const progreso = item.progreso || 'NO INICIADO';
+  const progCls  = PROGRESO_CSS[progreso] || 'no-iniciado';
+  const progOpts = ALLOWED_PROGRESO.map(p =>
+    `<option value="${p}"${progreso === p ? ' selected' : ''}>${PROGRESO_LABELS[p]}</option>`
+  ).join('');
+
+  const reqResp = item.requiere_respuesta === true ||
+    String(item.requiere_respuesta).toUpperCase() === 'TRUE';
+
+  return `
+    <div class="notif-card ${urgClass}">
+      <div class="notif-card-main">
+        <div class="notif-card-top">
+          <span class="notif-card-doc">${escapeHtml(item.documento || '—')}</span>
+          <span class="notif-card-date">${formatDate(item.fecha_notificacion)}</span>
+        </div>
+        ${item.asunto
+          ? `<div class="notif-card-asunto">${escapeHtml(item.asunto)}</div>`
+          : ''}
+        <div class="notif-card-tareas">${tareasBadges(item.tarea)}</div>
+        <div class="notif-card-flags">
+          ${reqResp ? '<span class="badge urgente" style="font-size:0.68rem">Requiere respuesta</span>' : ''}
+          ${item.tipo_acto ? `<span class="badge" style="font-size:0.68rem;background:rgba(100,116,139,0.15);color:#94a3b8">${escapeHtml(item.tipo_acto)}</span>` : ''}
+        </div>
+      </div>
+      <div class="notif-card-actions">
+        <div>${badgeDias(item.dias_restantes)}</div>
+        <select class="select-progreso progreso-${progCls}"
+          data-id="${escapeHtml(item.id)}"
+          data-prev="${escapeHtml(progreso)}">
+          ${progOpts}
+        </select>
+        <button class="btn-detail" data-id="${escapeHtml(item.id)}">Ver →</button>
+      </div>
+    </div>
+  `;
+}
+
+/* ──────────────────────────── Tabla (all view) ────────────────── */
 
 function rowUrgencyClass(item) {
   if (item.progreso === 'PRESENTADO') return '';
   if (item.plazo_vencido) return 'row-vencido';
   const d = parseInt(item.dias_restantes, 10);
   if (isNaN(d)) return '';
-  if (d < 0)   return 'row-vencido';
-  if (d <= 1)  return 'row-urgente';
-  if (d <= 3)  return 'row-alerta';
+  if (d < 0)  return 'row-vencido';
+  if (d <= 1) return 'row-urgente';
+  if (d <= 3) return 'row-alerta';
   return '';
 }
 
@@ -184,60 +387,56 @@ function progresoSelect(item) {
 }
 
 function tareasBadges(tareaStr) {
-  if (!tareaStr) return '<span class="muted">—</span>';
+  if (!tareaStr) return '<span class="muted" style="font-size:0.78rem">—</span>';
   const tareas = tareaStr.split(',').map(t => t.trim()).filter(Boolean);
-  if (tareas.length === 0) return '<span class="muted">—</span>';
-  const max   = 2;
-  const shown = tareas.slice(0, max).map(t => `<span class="tag-tarea">${escapeHtml(t)}</span>`).join('');
-  const extra = tareas.length > max
-    ? ` <span class="tag-more">+${tareas.length - max}</span>`
-    : '';
+  if (tareas.length === 0) return '<span class="muted" style="font-size:0.78rem">—</span>';
+  const max    = 2;
+  const shown  = tareas.slice(0, max).map(t => `<span class="tag-tarea">${escapeHtml(t)}</span>`).join('');
+  const extra  = tareas.length > max ? ` <span class="tag-more">+${tareas.length - max}</span>` : '';
   return shown + extra;
 }
 
 function renderTable(items) {
-  const tbody         = document.getElementById('notif-tbody');
-  const table         = document.getElementById('notif-table');
-  const emptyFiltered = document.getElementById('empty-filtered');
-  const emptyApi      = document.getElementById('empty-api');
+  const tbody      = document.getElementById('notif-tbody');
+  const table      = document.getElementById('notif-table');
+  const emptyFilt  = document.getElementById('empty-filtered');
+  const emptyApi   = document.getElementById('empty-api');
 
   if (state.items.length === 0) {
     table.classList.add('hidden');
-    emptyFiltered.classList.add('hidden');
+    emptyFilt.classList.add('hidden');
     emptyApi.classList.remove('hidden');
     return;
   }
-
   emptyApi.classList.add('hidden');
 
   if (items.length === 0) {
     table.classList.add('hidden');
-    emptyFiltered.classList.remove('hidden');
+    emptyFilt.classList.remove('hidden');
     return;
   }
-
-  emptyFiltered.classList.add('hidden');
+  emptyFilt.classList.add('hidden');
   table.classList.remove('hidden');
 
   tbody.innerHTML = items.map(i => `
     <tr class="${rowUrgencyClass(i)}" data-id="${escapeHtml(i.id)}">
       <td>${progresoSelect(i)}</td>
       <td>
-        <div>${formatDate(i.fecha_notificacion)}</div>
-        ${i.plazo_vencido ? '<span class="badge vencido small">Venció</span>' : ''}
+        <div style="white-space:nowrap">${formatDate(i.fecha_notificacion)}</div>
+        ${i.plazo_vencido ? '<span class="badge vencido" style="font-size:0.68rem;margin-top:2px">Venció</span>' : ''}
       </td>
       <td>
-        <strong>${escapeHtml(i.documento || '—')}</strong>
-        <div class="muted small">${escapeHtml((i.asunto || '').slice(0, 90))}</div>
+        <strong style="font-size:0.875rem">${escapeHtml(i.documento || '—')}</strong>
+        <div class="muted" style="font-size:0.78rem;margin-top:2px">${escapeHtml((i.asunto || '').slice(0, 90))}</div>
       </td>
       <td>
-        <div>${escapeHtml((i.empresa || '').slice(0, 35))}</div>
-        ${i.sede ? `<div class="muted small">📍 ${escapeHtml(i.sede)}</div>` : ''}
+        <div style="font-size:0.875rem">${escapeHtml((i.empresa || '').slice(0, 35))}</div>
+        ${i.sede ? `<div class="muted" style="font-size:0.75rem;margin-top:2px">📍 ${escapeHtml(i.sede)}</div>` : ''}
       </td>
       <td class="col-tarea">${tareasBadges(i.tarea)}</td>
-      <td>
-        <div>${i.plazo_vencimiento ? formatDate(i.plazo_vencimiento) : '—'}</div>
-        <div>${badgeDias(i.dias_restantes)}</div>
+      <td style="white-space:nowrap">
+        <div style="font-size:0.82rem">${i.plazo_vencimiento ? formatDate(i.plazo_vencimiento) : '—'}</div>
+        <div style="margin-top:2px">${badgeDias(i.dias_restantes)}</div>
       </td>
       <td><button class="btn-detail" data-id="${escapeHtml(i.id)}">Ver →</button></td>
     </tr>
@@ -246,33 +445,44 @@ function renderTable(items) {
   tbody.querySelectorAll('.btn-detail').forEach(btn =>
     btn.addEventListener('click', () => openDetail(btn.dataset.id))
   );
+  tbody.querySelectorAll('select.select-progreso').forEach(sel =>
+    sel.addEventListener('change', e => handleProgresoChange(sel.dataset.id, e.target.value))
+  );
 }
 
 /* ──────────────────────────── Progreso change ─────────────────── */
 
 async function handleProgresoChange(id, progreso) {
-  const select = document.querySelector(`select.select-progreso[data-id="${id}"]`);
-  const prev   = select ? select.dataset.prev : progreso;
+  const selectors = `select.select-progreso[data-id="${id}"]`;
+  const allSelects = document.querySelectorAll(selectors);
+  const prev = allSelects.length ? allSelects[0].dataset.prev : progreso;
 
   try {
     await api('update_status', { id, campo: 'progreso', valor: progreso });
     const item = state.items.find(i => i.id === id);
     if (item) item.progreso = progreso;
-    if (select) {
+
+    allSelects.forEach(sel => {
       const cls = PROGRESO_CSS[progreso] || 'no-iniciado';
-      select.className    = `select-progreso progreso-${cls}`;
-      select.dataset.prev = progreso;
-      const tr = select.closest('tr');
+      sel.className    = `select-progreso progreso-${cls}`;
+      sel.dataset.prev = progreso;
+      const tr = sel.closest('tr');
       if (tr) tr.className = rowUrgencyClass(item || { progreso, plazo_vencido: false });
-    }
+    });
+
     showToast(`Progreso: ${PROGRESO_LABELS[progreso] || progreso}`, 'ok');
+
+    // Si en pending view un item pasa a PRESENTADO, refresca el grupo
+    if (state.view === 'pending' && progreso === 'PRESENTADO') {
+      setTimeout(() => applyFilters(), 800);
+    }
   } catch (err) {
-    if (select) select.value = prev;
+    allSelects.forEach(sel => { sel.value = prev; });
     showToast('Error al actualizar: ' + err.message, 'error');
   }
 }
 
-/* ──────────────────────────── Tarea save ──────────────────────── */
+/* ──────────────────────────── Tarea ───────────────────────────── */
 
 const TAREAS_CATALOGO = [
   'comunicar en WhatsApp', 'descargos', 'remitir expedientes', 'subsanar observaciones',
@@ -286,12 +496,10 @@ async function saveTarea(id, tareaStr) {
   const status = document.getElementById('tarea-status');
   if (btn) btn.disabled = true;
   if (status) status.textContent = 'Guardando...';
-
   try {
     await api('update_status', { id, campo: 'tarea', valor: tareaStr });
     const item = state.items.find(i => i.id === id);
     if (item) item.tarea = tareaStr;
-    // Actualizar los pills en la tabla sin recargar
     document.querySelectorAll(`tr[data-id="${id}"] .col-tarea`).forEach(td => {
       td.innerHTML = tareasBadges(tareaStr);
     });
@@ -306,14 +514,13 @@ async function saveTarea(id, tareaStr) {
   }
 }
 
-/* ──────────────────────────── Notas save ──────────────────────── */
+/* ──────────────────────────── Notas ───────────────────────────── */
 
 async function saveNotas(id, notas) {
   const btn    = document.getElementById('btn-save-notas');
   const status = document.getElementById('notas-status');
   if (btn) btn.disabled = true;
   if (status) status.textContent = 'Guardando...';
-
   try {
     await api('update_status', { id, campo: 'notas', valor: notas });
     const item = state.items.find(i => i.id === id);
@@ -396,7 +603,7 @@ function renderTareaEditor(currentTareaStr) {
   return `
     <div class="tarea-editor">
       <div class="tarea-grid">${checks}</div>
-      <div class="notas-actions" style="margin-top:0.6rem">
+      <div class="notas-actions" style="margin-top:0.7rem">
         <button id="btn-save-tarea">💾 Guardar tareas</button>
         <span id="tarea-status" class="muted small"></span>
       </div>
@@ -409,11 +616,14 @@ function renderResumenEstructurado(d) {
   if (!tiene) return '';
 
   const row = (label, val, icon) => val
-    ? `<div class="re-row"><span class="re-label">${icon} ${label}</span><span class="re-val">${escapeHtml(val)}</span></div>`
+    ? `<div class="re-row">
+         <span class="re-label">${icon} ${label}</span>
+         <span class="re-val">${escapeHtml(val)}</span>
+       </div>`
     : '';
 
   return `
-    <h3>🧩 Resumen estructurado</h3>
+    <p class="section-heading">🧩 Resumen estructurado</p>
     <div class="resumen-estructurado">
       ${row('Tipo de acto', d.tipo_acto, '📄')}
       ${row('Acción requerida', d.accion_requerida, '⚡')}
@@ -428,14 +638,20 @@ function renderDetailTab(d) {
   const progresoOptions = ALLOWED_PROGRESO.map(p =>
     `<option value="${p}"${progreso === p ? ' selected' : ''}>${PROGRESO_LABELS[p]}</option>`
   ).join('');
-  const progresoClsDetail = PROGRESO_CSS[progreso] || 'no-iniciado';
+  const progCls = PROGRESO_CSS[progreso] || 'no-iniciado';
+
+  const reqResp = d.requiere_respuesta === true ||
+    String(d.requiere_respuesta).toUpperCase() === 'TRUE';
 
   return `
-    <h2 style="margin:0 0 0.3rem">${escapeHtml(d.documento || 'Sin nombre')}</h2>
-    <p class="muted">${escapeHtml(d.asunto || '')}</p>
+    <h2 style="margin:0 0 0.2rem;font-size:1.15rem;font-weight:800">${escapeHtml(d.documento || 'Sin nombre')}</h2>
+    <p class="muted" style="margin:0 0 1rem;font-size:0.85rem">${escapeHtml(d.asunto || '')}</p>
 
+    ${reqResp ? '<span class="badge urgente" style="margin-bottom:0.75rem;display:inline-block">⚡ Requiere respuesta</span>' : ''}
+
+    <p class="section-heading">📋 Datos de la notificación</p>
     <div class="detail-grid">
-      <div><strong>Fecha notificación:</strong> ${formatDate(d.fecha_notificacion)}</div>
+      <div><strong>Fecha:</strong> ${formatDate(d.fecha_notificacion)}</div>
       <div><strong>Lectura:</strong> ${d.lectura_notificacion ? formatDate(d.lectura_notificacion) : '—'}</div>
       <div><strong>Empresa:</strong> ${escapeHtml(d.empresa || '—')}</div>
       <div><strong>RUC:</strong> ${escapeHtml(d.ruc || '—')}</div>
@@ -444,35 +660,35 @@ function renderDetailTab(d) {
       <div><strong>Casilla origen:</strong> ${escapeHtml(d.casilla_origen || '—')}</div>
       <div><strong>Referencia:</strong> ${escapeHtml(d.referencia || '—')}</div>
       <div><strong>Plazo:</strong> ${escapeHtml(String(d.plazo_dias_habiles || '—'))} días hábiles</div>
-      <div><strong>Vence:</strong> ${formatDate(d.plazo_vencimiento)} ${badgeDias(d.dias_restantes)}</div>
-      <div><strong>Confianza IA:</strong> ${escapeHtml(d.confianza_ia || '—')} (${escapeHtml(d.modelo_ia || '—')})</div>
+      <div><strong>Vence:</strong> ${formatDate(d.plazo_vencimiento)} &nbsp;${badgeDias(d.dias_restantes)}</div>
+      <div><strong>Confianza IA:</strong> ${escapeHtml(d.confianza_ia || '—')} &nbsp;<span class="muted small">${escapeHtml(d.modelo_ia || '')}</span></div>
       <div>
-        <strong>Progreso:</strong>
+        <strong>Progreso:</strong><br>
         <select id="detail-progreso-select"
-          class="select-progreso progreso-${progresoClsDetail}"
+          class="select-progreso progreso-${progCls}"
           data-id="${escapeHtml(d.id)}"
           data-prev="${escapeHtml(progreso)}"
-          style="margin-top:0.3rem">
+          style="margin-top:0.4rem">
           ${progresoOptions}
         </select>
       </div>
     </div>
 
-    <h3>📋 Resumen</h3>
-    <p style="line-height:1.7">${escapeHtml(d.resumen || 'Sin resumen.')}</p>
+    <p class="section-heading">📝 Resumen IA</p>
+    <p style="line-height:1.7;font-size:0.9rem;margin:0 0 0.75rem">${escapeHtml(d.resumen || 'Sin resumen.')}</p>
 
     ${renderResumenEstructurado(d)}
 
-    <h3>🗂 Tareas <span class="muted small" style="font-weight:400">(seleccioná las que aplican)</span></h3>
+    <p class="section-heading">🗂 Tareas <span style="font-weight:400;font-size:0.8rem;text-transform:none;letter-spacing:0">(seleccioná las que aplican)</span></p>
     ${renderTareaEditor(d.tarea)}
 
     ${d.drive_view_url ? `
-      <h3>📎 PDF unificado</h3>
+      <p class="section-heading">📎 PDF unificado</p>
       <iframe class="pdf-frame" src="${embedDriveUrl(d.drive_view_url)}" allow="autoplay"></iframe>
-      <p style="margin-top:0.5rem"><a href="${d.drive_view_url}" target="_blank" rel="noopener">Abrir en Drive ↗</a></p>
+      <p style="margin-top:0.5rem;font-size:0.85rem"><a href="${d.drive_view_url}" target="_blank" rel="noopener" style="color:var(--primary)">Abrir en Drive ↗</a></p>
     ` : ''}
 
-    <h3>📝 Notas internas</h3>
+    <p class="section-heading">💬 Notas internas</p>
     <div class="notas-editor">
       <textarea id="notas-edit" rows="4"
         placeholder="Agregar notas sobre esta notificación...">${escapeHtml(d.notas || '')}</textarea>
@@ -487,20 +703,16 @@ function renderDetailTab(d) {
 function bindDetailTabEvents(id, detail) {
   const progresoSel = document.getElementById('detail-progreso-select');
   if (progresoSel) {
-    progresoSel.addEventListener('change', e => {
-      handleProgresoChange(id, e.target.value);
-    });
+    progresoSel.addEventListener('change', e => handleProgresoChange(id, e.target.value));
   }
-
   const btnSaveTarea = document.getElementById('btn-save-tarea');
   if (btnSaveTarea) {
     btnSaveTarea.addEventListener('click', () => {
-      const checks  = document.querySelectorAll('.tarea-grid input[type="checkbox"]:checked');
+      const checks   = document.querySelectorAll('.tarea-grid input[type="checkbox"]:checked');
       const tareaStr = [...checks].map(c => c.value).join(', ');
       saveTarea(id, tareaStr);
     });
   }
-
   const btnSaveNotas = document.getElementById('btn-save-notas');
   if (btnSaveNotas) {
     btnSaveNotas.addEventListener('click', () => {
@@ -522,22 +734,19 @@ function renderResponsePanel(notifId, detail) {
     return `
       <div class="response-no-templates">
         <p>⚠️ No hay plantillas disponibles.</p>
-        <p class="muted small">Ejecutá <code>_setupPlantillas()</code> en Apps Script para crear las plantillas de ejemplo, luego recargá el dashboard.</p>
+        <p class="muted small">Ejecutá <code>_setupPlantillas()</code> en Apps Script, luego recargá el dashboard.</p>
       </div>
     `;
   }
-
   const tplOptions = state.templates
     .map(t => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.nombre)}${t.tipo_notificacion ? ' — ' + escapeHtml(t.tipo_notificacion) : ''}</option>`)
     .join('');
-
   return `
     <div class="response-panel">
       <div class="response-context">
         <strong>${escapeHtml(detail.documento || '—')}</strong>
         <p class="muted small" style="margin:0.2rem 0 0">${escapeHtml(detail.asunto || '')}</p>
       </div>
-
       <div class="form-group">
         <label class="form-label">Plantilla de respuesta</label>
         <select id="resp-template" class="response-select">
@@ -545,25 +754,21 @@ function renderResponsePanel(notifId, detail) {
           ${tplOptions}
         </select>
       </div>
-
       <div class="form-group">
         <label class="form-label">Justificación / Insumos</label>
         <textarea id="resp-justification" class="response-textarea"
-          placeholder="Pegá aquí: fechas relevantes, argumentos legales, datos de la empresa, acciones tomadas, o cualquier contexto que deba incluir la respuesta..."
+          placeholder="Fechas relevantes, argumentos legales, datos de la empresa, acciones tomadas..."
           rows="7"></textarea>
       </div>
-
       <button id="btn-generate" class="btn-generate">✨ Generar con IA</button>
-
       <div id="response-generating" class="response-loading hidden">
         <div class="spinner"></div>
-        Generando respuesta con DeepSeek... esto puede tomar unos segundos.
+        Generando respuesta... esto puede tomar unos segundos.
       </div>
-
       <div id="response-output" class="hidden response-output-panel">
         <div class="form-label-row">
           <label class="form-label">Borrador generado</label>
-          <span class="muted small">Editá directamente el texto antes de descargar</span>
+          <span class="muted small">Editá el texto antes de descargar</span>
         </div>
         <div id="resp-preview" class="response-preview" contenteditable="true" spellcheck="true"></div>
         <div class="response-actions">
@@ -582,7 +787,6 @@ function bindResponsePanelEvents(notifId, detail) {
     if (!templateId) { showToast('Seleccioná una plantilla primero', 'warn'); return; }
     await handleGenerateResponse(notifId, templateId, justificacion);
   });
-
   const btnDownload = document.getElementById('btn-download-word');
   if (btnDownload) {
     btnDownload.addEventListener('click', () => {
@@ -591,7 +795,6 @@ function bindResponsePanelEvents(notifId, detail) {
       downloadWord(text, filename, detail);
     });
   }
-
   const btnRegen = document.getElementById('btn-regenerate');
   if (btnRegen) {
     btnRegen.addEventListener('click', () => {
@@ -612,7 +815,7 @@ async function handleGenerateResponse(notifId, templateId, justificacion) {
   output.classList.add('hidden');
 
   try {
-    const result  = await api('generate_response', {
+    const result = await api('generate_response', {
       notification_id: notifId,
       template_id: templateId,
       justificacion,
@@ -636,9 +839,7 @@ async function downloadWord(text, filename, detail) {
     showToast('Librería Word no cargada. Revisá la conexión a internet.', 'error');
     return;
   }
-
   const { Document, Packer, Paragraph, TextRun } = window.docx;
-
   const blocks = text.split(/\n\n+/);
   const paragraphs = blocks.map(block => {
     const lines = block.split('\n');
@@ -652,13 +853,11 @@ async function downloadWord(text, filename, detail) {
       spacing:  { after: 200 },
     });
   });
-
   const doc = new Document({
     creator: 'MTC Casilla Bot',
     title:   `Respuesta — ${detail?.documento || filename}`,
     sections: [{ properties: {}, children: paragraphs }],
   });
-
   try {
     const blob = await Packer.toBlob(doc);
     saveAs(blob, filename + '.docx');
@@ -676,9 +875,7 @@ function showToast(msg, type = 'info') {
   toast.className = `toast toast-${type}`;
   toast.textContent = msg;
   container.appendChild(toast);
-
   requestAnimationFrame(() => requestAnimationFrame(() => toast.classList.add('toast-show')));
-
   setTimeout(() => {
     toast.classList.remove('toast-show');
     toast.addEventListener('transitionend', () => toast.remove(), { once: true });
@@ -712,7 +909,6 @@ function showErrorCard(msg) {
   document.getElementById('empty-api').classList.add('hidden');
 }
 function hideErrorCard() { document.getElementById('error-card').classList.add('hidden'); }
-function hideEmptyApi()  { document.getElementById('empty-api').classList.add('hidden'); }
 
 /* ──────────────────────────── Onboarding ──────────────────────── */
 
@@ -748,78 +944,80 @@ function handleSaveUrl(e) {
     return;
   }
   saveApiUrl(url);
-  location.reload();
+  state.apiUrl = url;
+  showDashboard();
+  loadTemplates();
+  loadAll();
 }
 
-/* ──────────────────────────── Event listeners ──────────────────── */
+/* ──────────────────────────── Init ────────────────────────────── */
 
-function bindCommonListeners() {
-  document.getElementById('api-url-form').addEventListener('submit', handleSaveUrl);
-  document.getElementById('btn-change-url').addEventListener('click', clearApiUrlAndReload);
-  document.getElementById('btn-error-change-url').addEventListener('click', clearApiUrlAndReload);
-  document.getElementById('btn-error-retry').addEventListener('click', loadAll);
-}
+document.addEventListener('DOMContentLoaded', () => {
+  state.apiUrl = getStoredApiUrl();
 
-function bindDashboardListeners() {
-  document.getElementById('btn-refresh').addEventListener('click', loadAll);
+  if (state.apiUrl) {
+    showDashboard();
+    loadTemplates();
+    loadAll();
+  } else {
+    showOnboarding();
+  }
 
+  // View tabs
+  document.querySelectorAll('.view-tab').forEach(tab => {
+    tab.addEventListener('click', () => switchView(tab.dataset.view));
+  });
+
+  // Filters
   document.getElementById('filter-search').addEventListener('input', e => {
-    state.filters.search = e.target.value; applyFilters();
+    state.filters.search = e.target.value;
+    applyFilters();
   });
   document.getElementById('filter-sede').addEventListener('change', e => {
-    state.filters.sede = e.target.value; applyFilters();
+    state.filters.sede = e.target.value;
+    applyFilters();
   });
   document.getElementById('filter-progreso').addEventListener('change', e => {
-    state.filters.progreso = e.target.value; applyFilters();
+    state.filters.progreso = e.target.value;
+    applyFilters();
   });
   document.getElementById('filter-pendientes').addEventListener('change', e => {
-    state.filters.soloPendientes = e.target.checked; applyFilters();
+    state.filters.soloPendientes = e.target.checked;
+    applyFilters();
   });
   document.getElementById('filter-since').addEventListener('change', e => {
-    state.filters.since = e.target.value; applyFilters();
+    state.filters.since = e.target.value;
+    applyFilters();
   });
 
-  /* Progreso select — event delegation on tbody */
-  document.getElementById('notif-tbody').addEventListener('change', e => {
-    if (e.target.classList.contains('select-progreso')) {
-      handleProgresoChange(e.target.dataset.id, e.target.value);
-    }
-  });
+  // Refresh
+  document.getElementById('btn-refresh').addEventListener('click', loadAll);
 
-  /* Modal close */
+  // Modal close
   document.getElementById('modal-close').addEventListener('click', () => {
     document.getElementById('modal').classList.add('hidden');
   });
   document.getElementById('modal').addEventListener('click', e => {
-    if (e.target.id === 'modal') document.getElementById('modal').classList.add('hidden');
+    if (e.target === document.getElementById('modal'))
+      document.getElementById('modal').classList.add('hidden');
   });
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') document.getElementById('modal').classList.add('hidden');
   });
 
-  /* Modal tabs */
+  // Modal tabs
   document.querySelectorAll('.modal-tab').forEach(btn => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   });
-}
 
-/* ──────────────────────────── Boot ────────────────────────────── */
+  // Onboarding
+  document.getElementById('api-url-form').addEventListener('submit', handleSaveUrl);
 
-function boot() {
-  bindCommonListeners();
-  state.apiUrl = getStoredApiUrl();
+  // Change URL buttons
+  document.getElementById('btn-change-url').addEventListener('click', clearApiUrlAndReload);
+  document.getElementById('btn-error-change-url').addEventListener('click', clearApiUrlAndReload);
+  document.getElementById('btn-error-retry').addEventListener('click', loadAll);
 
-  if (!state.apiUrl) {
-    showOnboarding();
-    return;
-  }
-
-  showDashboard();
-  bindDashboardListeners();
-  loadAll();
-  loadTemplates();
-
-  setInterval(loadAll, 5 * 60 * 1000);
-}
-
-boot();
+  // Initial view state
+  switchView('pending');
+});
