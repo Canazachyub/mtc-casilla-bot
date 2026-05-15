@@ -833,5 +833,203 @@ def test_login_cmd(
     asyncio.run(_run())
 
 
+@app.command("reprocess")
+def reprocess_cmd(
+    limit: Annotated[
+        int,
+        typer.Option("--limit", help="Máximo de notificaciones a re-procesar."),
+    ] = 50,
+    all_fields: Annotated[
+        bool,
+        typer.Option("--all-fields", help="Actualizar TODOS los campos IA (no solo los nuevos vacíos)."),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Simular sin escribir en el Sheet."),
+    ] = False,
+    log_level: Annotated[str, typer.Option("--log-level")] = "INFO",
+) -> None:
+    """Re-analiza notificaciones existentes descargando su PDF de Drive y re-corriendo la IA.
+
+    Por defecto procesa solo filas donde ``tipo_acto`` está vacío.
+    Con ``--all-fields`` re-analiza todas y sobreescribe todos los campos IA.
+
+    Ejemplos:
+        uv run mtc-bot reprocess
+        uv run mtc-bot reprocess --limit 10 --dry-run
+        uv run mtc-bot reprocess --all-fields --limit 5
+    """
+    _setup_logging(log_level)
+    asyncio.run(_reprocess_async(limit=limit, all_fields=all_fields, dry_run=dry_run))
+
+
+async def _reprocess_async(limit: int, all_fields: bool, dry_run: bool) -> None:
+    """Orquesta el re-procesamiento de notificaciones existentes."""
+    from mtc_bot.ai_extractor import AIExtractionFailed
+    from mtc_bot.ai_extractor import extract as ai_extract
+    from mtc_bot.google.drive_uploader import download_pdf_from_drive
+    from mtc_bot.google.sheets_writer import get_all_notificaciones, update_notificacion_fields
+    from mtc_bot.pdf_pipeline import extract_text
+
+    from mtc_bot.config import PROJECT_ROOT  # noqa: PLC0415
+
+    settings = get_settings()
+    tmp_dir = PROJECT_ROOT / "data" / "downloads" / "_reprocess_tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    # Campos que siempre actualizamos (los nuevos del resumen estructurado)
+    NEW_FIELDS = {"tipo_acto", "accion_requerida", "consecuencias", "fundamento_legal"}
+    # Campos adicionales que se actualizan con --all-fields
+    ALL_AI_FIELDS = NEW_FIELDS | {"resumen", "tarea", "casilla_origen", "referencia",
+                                   "emisor", "asunto", "requiere_respuesta",
+                                   "plazo_dias_habiles", "confianza_ia", "modelo_ia"}
+
+    missing_field = None if all_fields else "tipo_acto"
+
+    console.print(
+        Panel(
+            f"[bold]mtc-bot reprocess[/bold]\n"
+            f"Modo: {'todos los campos' if all_fields else 'solo campos nuevos vacíos'}\n"
+            f"Límite: {limit} · Dry-run: {dry_run}",
+            border_style="cyan",
+        )
+    )
+
+    # 1) Leer filas candidatas del Sheet
+    try:
+        rows = get_all_notificaciones(
+            settings.google_service_account_json,
+            settings.sheet_id,
+            settings.sheet_tab_notificaciones,
+            only_missing_field=missing_field,
+        )
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]✗ Error leyendo el Sheet: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    if not rows:
+        console.print("[green]✓ No hay notificaciones pendientes de re-procesar.[/green]")
+        return
+
+    total = min(len(rows), limit)
+    console.print(f"  {len(rows)} filas candidatas · procesando {total}\n")
+
+    ok_count = err_count = skip_count = 0
+
+    for row in rows[:limit]:
+        notif_id    = str(row.get("id", "")).strip()
+        empresa     = str(row.get("empresa", "")).strip()[:35]
+        documento   = str(row.get("documento", "")).strip()[:50]
+        file_id     = str(row.get("drive_file_id", "")).strip()
+        short_label = f"[{empresa}] {documento}"
+
+        if not file_id:
+            console.print(f"  {WARN} {short_label}: sin drive_file_id, saltando")
+            skip_count += 1
+            continue
+
+        if dry_run:
+            console.print(f"  [cyan]DRY[/cyan] {short_label}")
+            ok_count += 1
+            continue
+
+        # 2) Descargar PDF de Drive
+        tmp_pdf = tmp_dir / f"{notif_id}.pdf"
+        try:
+            download_pdf_from_drive(
+                settings.google_service_account_json,
+                file_id,
+                tmp_pdf,
+            )
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"  {FAIL} {short_label}: descarga Drive falló: {exc}")
+            err_count += 1
+            continue
+
+        # 3) Extraer texto (con mejoras: layout, tablas, OCR si es necesario)
+        try:
+            texto = extract_text(tmp_pdf)
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"  {FAIL} {short_label}: extracción texto falló: {exc}")
+            err_count += 1
+            tmp_pdf.unlink(missing_ok=True)
+            continue
+
+        if not texto.strip():
+            console.print(f"  {WARN} {short_label}: texto vacío tras extracción, saltando")
+            skip_count += 1
+            tmp_pdf.unlink(missing_ok=True)
+            continue
+
+        # 4) Re-análisis IA
+        try:
+            extraction = await ai_extract(texto, settings)
+        except AIExtractionFailed as exc:
+            console.print(f"  {FAIL} {short_label}: IA falló: {exc}")
+            err_count += 1
+            tmp_pdf.unlink(missing_ok=True)
+            continue
+
+        # 5) Construir dict de campos a actualizar
+        fields_to_update: dict[str, str | int | float | bool | None] = {
+            "tipo_acto":       extraction.tipo_acto,
+            "accion_requerida": extraction.accion_requerida,
+            "consecuencias":   extraction.consecuencias,
+            "fundamento_legal": extraction.fundamento_legal,
+        }
+        if all_fields:
+            fields_to_update.update({
+                "resumen":           extraction.resumen,
+                "tarea":             ", ".join(extraction.tarea),
+                "casilla_origen":    extraction.casilla_origen,
+                "referencia":        extraction.referencia,
+                "emisor":            extraction.emisor,
+                "asunto":            extraction.asunto,
+                "requiere_respuesta": extraction.requiere_respuesta,
+                "plazo_dias_habiles": extraction.plazo_dias_habiles,
+                "confianza_ia":      extraction.confianza,
+                "modelo_ia":         extraction.modelo_ia,
+            })
+
+        # 6) Actualizar Sheet
+        try:
+            updated = update_notificacion_fields(
+                settings.google_service_account_json,
+                settings.sheet_id,
+                settings.sheet_tab_notificaciones,
+                notif_id,
+                fields_to_update,
+            )
+            if updated:
+                console.print(
+                    f"  {OK} {short_label} "
+                    f"[dim]({extraction.modelo_ia}, confianza={extraction.confianza})[/dim]"
+                )
+                ok_count += 1
+            else:
+                console.print(f"  {WARN} {short_label}: ID no encontrado en Sheet")
+                skip_count += 1
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"  {FAIL} {short_label}: Sheet update falló: {exc}")
+            err_count += 1
+
+        tmp_pdf.unlink(missing_ok=True)
+
+    # Limpiar directorio temporal
+    try:
+        tmp_dir.rmdir()
+    except OSError:
+        pass  # aún tiene archivos si hubo errores — no importa
+
+    console.print(
+        Panel(
+            f"{OK} [green]{ok_count}[/green] actualizadas · "
+            f"{WARN} [yellow]{skip_count}[/yellow] saltadas · "
+            f"{FAIL} [red]{err_count}[/red] errores",
+            border_style="green" if err_count == 0 else "yellow",
+        )
+    )
+
+
 if __name__ == "__main__":
     app()

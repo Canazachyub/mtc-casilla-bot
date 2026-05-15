@@ -208,9 +208,43 @@ def upload_pdf(
     )
 
 
+def download_pdf_from_drive(sa_json_path: Path, file_id: str, dest_path: Path) -> Path:
+    """Descarga un PDF de Drive por ``file_id`` al path local ``dest_path``.
+
+    Usa el service account (solo lectura, no consume cuota de usuario).
+
+    Args:
+        sa_json_path: path al ``service-account.json``.
+        file_id: ID del archivo en Drive (campo ``drive_file_id`` del Sheet).
+        dest_path: ruta local donde guardar el PDF descargado.
+
+    Returns:
+        ``dest_path`` si la descarga fue exitosa.
+
+    Raises:
+        googleapiclient.errors.HttpError: si el archivo no existe o el SA no tiene acceso.
+        OSError: si no se puede escribir el archivo local.
+    """
+    import io  # noqa: PLC0415
+
+    from googleapiclient.http import MediaIoBaseDownload  # noqa: PLC0415
+
+    service = get_drive_service(sa_json_path)
+    request = service.files().get_media(fileId=file_id)
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    with dest_path.open("wb") as fh:
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+    logger.info("Descargado de Drive: %s → %s", file_id[:12], dest_path.name)
+    return dest_path
+
+
 __all__ = [
     "DriveFolderStatus",
     "UploadedFile",
+    "download_pdf_from_drive",
     "get_drive_service",
     "get_drive_service_oauth",
     "upload_pdf",

@@ -160,11 +160,109 @@ def append_notificacion(
     )
 
 
+def get_all_notificaciones(
+    sa_json_path: Path,
+    sheet_id: str,
+    tab: str,
+    only_missing_field: str | None = None,
+) -> list[dict]:
+    """Lee todas las filas del tab y las devuelve como lista de dicts.
+
+    Args:
+        sa_json_path: path al SA JSON.
+        sheet_id: ID del Sheet.
+        tab: nombre del tab.
+        only_missing_field: si se especifica, filtra solo filas donde ese campo
+            esté vacío o ausente. Útil para ``reprocess --missing-only``.
+
+    Returns:
+        Lista de dicts ``{columna: valor}`` por fila.
+    """
+    client = get_client(sa_json_path)
+    ws = _get_worksheet(client, sheet_id, tab)
+    rows = ws.get_all_records(default_blank="")
+    if only_missing_field:
+        rows = [r for r in rows if not str(r.get(only_missing_field, "")).strip()]
+    logger.info(
+        "Leídas %d filas del tab '%s'%s",
+        len(rows),
+        tab,
+        f" (filtro: {only_missing_field} vacío)" if only_missing_field else "",
+    )
+    return rows
+
+
+def update_notificacion_fields(
+    sa_json_path: Path,
+    sheet_id: str,
+    tab: str,
+    notification_id: str,
+    fields: dict[str, str | int | float | bool | None],
+) -> bool:
+    """Actualiza campos específicos de una fila existente identificada por su ``id``.
+
+    Usa ``batch_update`` para minimizar llamadas a la API (una sola request por fila).
+
+    Args:
+        sa_json_path: path al SA JSON.
+        sheet_id: ID del Sheet.
+        tab: nombre del tab.
+        notification_id: valor del campo ``id`` de la fila a actualizar.
+        fields: dict ``{nombre_columna: nuevo_valor}`` con los campos a actualizar.
+            Columnas que no existen en el Sheet se ignoran con un warning.
+
+    Returns:
+        ``True`` si encontró y actualizó la fila; ``False`` si el ID no existe.
+    """
+    client = get_client(sa_json_path)
+    ws = _get_worksheet(client, sheet_id, tab)
+    headers = ws.row_values(1)
+
+    if "id" not in headers:
+        raise RuntimeError(f"Tab '{tab}' no tiene columna 'id'")
+
+    id_col_index = headers.index("id") + 1  # 1-based
+    id_values = ws.col_values(id_col_index)[1:]  # skip header
+
+    try:
+        row_idx = id_values.index(notification_id) + 2  # +2: header + 1-based
+    except ValueError:
+        logger.warning("ID '%s' no encontrado en tab '%s'", notification_id, tab)
+        return False
+
+    updates: list[dict] = []
+    for field, value in fields.items():
+        if field not in headers:
+            logger.warning("Campo '%s' no existe en el Sheet (tab=%s), ignorando", field, tab)
+            continue
+        col_idx = headers.index(field) + 1  # 1-based
+        if isinstance(value, bool):
+            cell_value = "TRUE" if value else "FALSE"
+        elif value is None:
+            cell_value = ""
+        else:
+            cell_value = str(value)
+        # Notación A1 manual: col letra + row número
+        col_letter = gspread.utils.rowcol_to_a1(1, col_idx)[:-1]  # strip the "1"
+        updates.append({"range": f"{col_letter}{row_idx}", "values": [[cell_value]]})
+
+    if updates:
+        ws.batch_update(updates, value_input_option="USER_ENTERED")
+        logger.info(
+            "Sheet update OK: id=%s fields=[%s]",
+            notification_id,
+            ", ".join(fields.keys()),
+        )
+    return True
+
+
 __all__ = [
     "REQUIRED_TABS",
     "SheetStatus",
     "append_notificacion",
+    "get_all_notificaciones",
     "get_client",
     "notification_exists",
+    "update_notificacion_fields",
     "verify_sheet_access",
 ]
