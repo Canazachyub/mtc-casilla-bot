@@ -30,7 +30,7 @@ const state = {
   currentDetailId: null,
   currentDetail:   null,
   filters: {
-    search: '', sede: '', progreso: '',
+    search: '', empresa: '', progreso: '',
     soloPendientes: false, since: '',
   },
 };
@@ -88,7 +88,7 @@ async function loadAll() {
     ]);
     renderMetrics(summary);
     state.items = list.items || [];
-    populateSedeFilter(state.items);
+    populateEmpresaFilter(state.items);
     applyFilters();
 
     document.getElementById('last-update').textContent =
@@ -121,11 +121,11 @@ function renderMetrics(s) {
   document.getElementById('m-empresas').textContent = empresasActivas.size || '—';
 }
 
-function populateSedeFilter(items) {
-  const sel   = document.getElementById('filter-sede');
-  const sedes = [...new Set(items.map(i => i.sede).filter(Boolean))].sort();
-  sel.innerHTML = '<option value="">Todas las sedes</option>' +
-    sedes.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+function populateEmpresaFilter(items) {
+  const sel      = document.getElementById('filter-empresa');
+  const empresas = [...new Set(items.map(i => i.empresa).filter(Boolean))].sort();
+  sel.innerHTML  = '<option value="">Todas las empresas</option>' +
+    empresas.map(e => `<option value="${escapeHtml(e)}">${escapeHtml(e)}</option>`).join('');
 }
 
 /* ──────────────────────────── View tabs ───────────────────────── */
@@ -161,7 +161,7 @@ function applyFilters() {
       (i.tarea     || '').toLowerCase().includes(q)
     );
   }
-  if (f.sede) data = data.filter(i => i.sede === f.sede);
+  if (f.empresa) data = data.filter(i => i.empresa === f.empresa);
 
   if (state.view === 'all') {
     if (f.progreso) data = data.filter(i => i.progreso === f.progreso);
@@ -973,8 +973,8 @@ document.addEventListener('DOMContentLoaded', () => {
     state.filters.search = e.target.value;
     applyFilters();
   });
-  document.getElementById('filter-sede').addEventListener('change', e => {
-    state.filters.sede = e.target.value;
+  document.getElementById('filter-empresa').addEventListener('change', e => {
+    state.filters.empresa = e.target.value;
     applyFilters();
   });
   document.getElementById('filter-progreso').addEventListener('change', e => {
