@@ -245,13 +245,28 @@ def _extract_page_text(page) -> str:
     return "\n\n".join(parts)
 
 
+def _configure_tesseract() -> None:
+    """Configura la ruta al ejecutable de Tesseract en Windows si no está en PATH."""
+    import sys  # noqa: PLC0415
+    if sys.platform != "win32":
+        return
+    import pytesseract  # noqa: PLC0415
+    import shutil  # noqa: PLC0415
+    if shutil.which("tesseract"):
+        return  # ya está en PATH
+    candidates = [
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+    ]
+    for path in candidates:
+        if Path(path).exists():
+            pytesseract.pytesseract.tesseract_cmd = path
+            return
+    logger.warning("Tesseract no encontrado en rutas conocidas de Windows.")
+
+
 def _try_ocr(pdf_path: Path, max_pages: int) -> str:
     """Intenta extraer texto por OCR con pytesseract (fallback para PDFs escaneados).
-
-    Requiere:
-        - ``pip install pytesseract pdf2image``
-        - Tesseract-OCR instalado en el sistema con el paquete de idioma
-          español (``spa``). En Windows: https://github.com/UB-Mannheim/tesseract/wiki
 
     Args:
         pdf_path: PDF a procesar.
@@ -267,17 +282,30 @@ def _try_ocr(pdf_path: Path, max_pages: int) -> str:
     except ImportError:
         logger.warning(
             "PDF escaneado detectado pero pytesseract/pdf2image no están instalados. "
-            "Para activar OCR: pip install pytesseract pdf2image "
-            "+ instalar Tesseract-OCR en el sistema con idioma 'spa'."
+            "Para activar OCR: uv pip install pytesseract pdf2image"
         )
         return ""
 
+    _configure_tesseract()
+
+    # Verificar que idioma 'spa' está disponible; si no, usar solo 'eng'
     try:
-        logger.info("Iniciando OCR sobre %s (primeras %d páginas)", pdf_path.name, max_pages)
+        langs_disponibles = pytesseract.get_languages()
+        lang = "spa+eng" if "spa" in langs_disponibles else "eng"
+        if "spa" not in langs_disponibles:
+            logger.warning(
+                "Idioma 'spa' no disponible en Tesseract, usando solo 'eng'. "
+                "Descargá spa.traineddata desde https://github.com/tesseract-ocr/tessdata"
+            )
+    except Exception:  # noqa: BLE001
+        lang = "spa+eng"
+
+    try:
+        logger.info("Iniciando OCR (%s) sobre %s (primeras %d páginas)", lang, pdf_path.name, max_pages)
         images = convert_from_path(str(pdf_path), first_page=1, last_page=max_pages, dpi=200)
         chunks: list[str] = []
         for i, img in enumerate(images, start=1):
-            text = pytesseract.image_to_string(img, lang="spa+eng") or ""
+            text = pytesseract.image_to_string(img, lang=lang) or ""
             if text.strip():
                 chunks.append(f"--- Página {i} (OCR) ---\n\n{text.strip()}")
         result = "\n\n".join(chunks)
