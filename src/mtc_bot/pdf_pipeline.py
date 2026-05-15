@@ -14,6 +14,14 @@ Orden estricto del merge (regla inviolable):
     2. Anexos (en orden alfabético).
     3. Constancia de notificación electrónica (penúltimo).
     4. Constancia de lectura (último).
+
+Estrategia de extracción de texto (extract_text):
+    * pdfplumber con layout=True → preserva orden de columnas y tablas.
+    * Extracción de tablas → se incluyen como texto estructurado.
+    * Limpieza de artefactos → números de página, watermarks, whitespace.
+    * Detección de PDF escaneado → alerta en log + fallback OCR opcional.
+    * Fallback OCR con pytesseract (requiere: pip install pytesseract pdf2image
+      + Tesseract-OCR instalado en el sistema con idioma spa).
 """
 
 from __future__ import annotations
@@ -37,12 +45,7 @@ PdfRole = Literal[
     "anexo",
 ]
 
-# Patrones para clasificar por nombre (case-insensitive). Los nombres reales
-# que llegan del portal MTC son del estilo:
-#   - "Constancia_Deposito_11542476.pdf"
-#   - "Constancia_Notificacion_11542476.pdf"
-#   - "Constancia_Lectura_11542476.pdf"
-#   - "000476-CR-2026-SUTRAN-06.3.4-SGFSV.pdf" (documento principal)
+# Patrones para clasificar por nombre (case-insensitive).
 _RE_CONSTANCIA_LECTURA = re.compile(
     r"constancia[_\s\-]*(?:de[_\s\-]*)?lectura",
     re.IGNORECASE,
@@ -53,21 +56,21 @@ _RE_CONSTANCIA_NOTIF = re.compile(
 )
 _RE_ANEXO = re.compile(r"\banexo\b", re.IGNORECASE)
 
-# Prefijo "NOTIFICACIÓN DE " (con o sin tilde, mayús/minús, espacios variables).
+# Prefijo "NOTIFICACIÓN DE " para el slug.
 _RE_PREFIJO_NOTIF = re.compile(
     r"^\s*notificaci[oó]n\s+de\s+",
     re.IGNORECASE,
 )
 
-# Caracteres permitidos en el slug final.
 _RE_SLUG_INVALIDOS = re.compile(r"[^A-Za-z0-9._\-]")
 _RE_GUIONES_DUPLICADOS = re.compile(r"-{2,}")
 
 _SLUG_MAX_LEN = 100
-
-# Tope defensivo para evitar bucles infinitos al renombrar con sufijo
-# incremental cuando ya existen archivos con el slug deseado.
 _RENAME_MAX_COLISIONES = 999
+
+# Densidad mínima de texto (chars/página) para considerar que el PDF NO está escaneado.
+# Por debajo de este umbral, se activa el fallback OCR.
+_MIN_CHARS_PER_PAGE = 80
 
 
 @dataclass(slots=True, frozen=True)
@@ -85,16 +88,7 @@ class ClassifiedPdf:
 
 
 def _classify_one(filename: str, *, has_main: bool) -> PdfRole:
-    """Detecta el rol de un PDF a partir de su nombre.
-
-    Args:
-        filename: nombre del archivo (sin importar el path).
-        has_main: si ya se asignó un ``documento_principal``. Si ``True``, el
-            siguiente "documento sin clasificar" se etiqueta como ``anexo``.
-
-    Returns:
-        El rol asignado.
-    """
+    """Detecta el rol de un PDF a partir de su nombre."""
     if _RE_CONSTANCIA_LECTURA.search(filename):
         return "constancia_lectura"
     if _RE_CONSTANCIA_NOTIF.search(filename):
@@ -115,9 +109,7 @@ def classify_pdfs(pdf_paths: list[Path]) -> list[ClassifiedPdf]:
         pdf_paths: lista de paths de PDFs descargados.
 
     Returns:
-        Lista de :class:`ClassifiedPdf` en el mismo orden de entrada (sin
-        reordenar). El reordenamiento para el merge se hace en
-        :func:`merge_pdfs`.
+        Lista de :class:`ClassifiedPdf` en el mismo orden de entrada.
     """
     classified: list[ClassifiedPdf] = []
     has_main = False
@@ -129,7 +121,6 @@ def classify_pdfs(pdf_paths: list[Path]) -> list[ClassifiedPdf]:
     return classified
 
 
-# Orden de mezcla por rol — números más bajos van primero.
 _MERGE_ORDER: dict[PdfRole, int] = {
     "documento_principal": 1,
     "anexo": 2,
@@ -144,14 +135,9 @@ def merge_pdfs(pdf_paths: list[Path], output: Path) -> Path:
     Orden: documento principal → anexos (alfabético) → constancia notificación
     → constancia lectura.
 
-    Si falta alguno de los roles "esperados" (constancias), se registra un
-    warning y se une lo disponible. Si NO hay documento principal, se falla
-    con :class:`ValueError`.
-
     Args:
         pdf_paths: lista de PDFs a unir (cualquier orden de entrada).
-        output: path destino del PDF unido. Se crea el directorio padre si
-            no existe.
+        output: path destino del PDF unido.
 
     Returns:
         El path ``output`` si la operación fue exitosa.
@@ -165,26 +151,17 @@ def merge_pdfs(pdf_paths: list[Path], output: Path) -> Path:
 
     classified = classify_pdfs(pdf_paths)
 
-    # Validación: tiene que haber al menos un documento principal.
     if not any(c.role == "documento_principal" for c in classified):
         raise ValueError(
             "No se detectó documento principal entre los PDFs. "
             f"Archivos recibidos: {[p.name for p in pdf_paths]}"
         )
 
-    # Warnings por roles esperados ausentes.
     if not any(c.role == "constancia_notificacion" for c in classified):
-        logger.warning(
-            "Merge sin constancia de notificación electrónica (output=%s)",
-            output.name,
-        )
+        logger.warning("Merge sin constancia de notificación electrónica (output=%s)", output.name)
     if not any(c.role == "constancia_lectura" for c in classified):
-        logger.warning(
-            "Merge sin constancia de lectura (output=%s)",
-            output.name,
-        )
+        logger.warning("Merge sin constancia de lectura (output=%s)", output.name)
 
-    # Orden estricto: por rol y luego alfabético por nombre.
     sorted_pdfs = sorted(
         classified,
         key=lambda c: (_MERGE_ORDER[c.role], c.path.name.lower()),
@@ -213,20 +190,128 @@ def merge_pdfs(pdf_paths: list[Path], output: Path) -> Path:
     return output
 
 
-def extract_text(pdf_path: Path, max_pages: int = 30) -> str:
-    """Extrae texto del PDF unido usando :mod:`pdfplumber`.
+# ─────────────────────────────────────────────────────────────────
+# Helpers de extracción de texto
+# ─────────────────────────────────────────────────────────────────
 
-    Si una página falla en extraerse (PDF mal formado, página escaneada sin
-    texto), se registra un warning y se continúa con la siguiente.
+def _clean_text(text: str) -> str:
+    """Limpia artefactos comunes en texto extraído de PDFs gubernamentales peruanos.
+
+    - Normaliza saltos de línea.
+    - Colapsa líneas que son solo números de página.
+    - Elimina marcadores "Página X de Y" / "Page X of Y".
+    - Colapsa whitespace excesivo sin destruir la estructura de párrafos.
+    """
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    # Eliminar líneas que son solo dígitos (número de página)
+    text = re.sub(r"^\s*\d{1,4}\s*$", "", text, flags=re.MULTILINE)
+    # Eliminar "Página X de Y" en cualquier capitalización
+    text = re.sub(r"[Pp][áa]gina\s+\d+\s+de\s+\d+", "", text)
+    text = re.sub(r"[Pp]age\s+\d+\s+of\s+\d+", "", text)
+    # Colapsar más de 2 saltos de línea consecutivos
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    # Colapsar espacios múltiples dentro de una línea (preservar el salto)
+    text = re.sub(r"[ \t]{3,}", "  ", text)
+    return text.strip()
+
+
+def _extract_page_text(page) -> str:
+    """Extrae texto de una página con layout=True y agrega tablas detectadas.
+
+    ``layout=True`` le indica a pdfplumber que preserve el orden de lectura
+    multi-columna, en lugar de extraer el texto en el orden interno del PDF
+    (que suele estar desordenado en documentos con columnas).
+    """
+    # layout=True: preserva posicionamiento espacial → mejor orden de lectura
+    raw = page.extract_text(layout=True) or ""
+
+    # Extraer tablas y agregarlas si tienen contenido
+    table_parts: list[str] = []
+    try:
+        tables = page.extract_tables()
+        for table in (tables or []):
+            rows = []
+            for row in table:
+                cells = [str(c or "").strip() for c in row]
+                if any(cells):
+                    rows.append(" | ".join(cells))
+            if rows:
+                table_parts.append("\n".join(rows))
+    except Exception as exc:  # noqa: BLE001 — tablas opcionales, no abortar
+        logger.debug("Error extrayendo tablas: %s", exc)
+
+    parts = [raw] if raw.strip() else []
+    parts.extend(table_parts)
+    return "\n\n".join(parts)
+
+
+def _try_ocr(pdf_path: Path, max_pages: int) -> str:
+    """Intenta extraer texto por OCR con pytesseract (fallback para PDFs escaneados).
+
+    Requiere:
+        - ``pip install pytesseract pdf2image``
+        - Tesseract-OCR instalado en el sistema con el paquete de idioma
+          español (``spa``). En Windows: https://github.com/UB-Mannheim/tesseract/wiki
 
     Args:
         pdf_path: PDF a procesar.
+        max_pages: número máximo de páginas a procesar.
+
+    Returns:
+        Texto extraído por OCR, o cadena vacía si el módulo no está disponible
+        o si OCR también falla.
+    """
+    try:
+        import pytesseract  # noqa: PLC0415
+        from pdf2image import convert_from_path  # noqa: PLC0415
+    except ImportError:
+        logger.warning(
+            "PDF escaneado detectado pero pytesseract/pdf2image no están instalados. "
+            "Para activar OCR: pip install pytesseract pdf2image "
+            "+ instalar Tesseract-OCR en el sistema con idioma 'spa'."
+        )
+        return ""
+
+    try:
+        logger.info("Iniciando OCR sobre %s (primeras %d páginas)", pdf_path.name, max_pages)
+        images = convert_from_path(str(pdf_path), first_page=1, last_page=max_pages, dpi=200)
+        chunks: list[str] = []
+        for i, img in enumerate(images, start=1):
+            text = pytesseract.image_to_string(img, lang="spa+eng") or ""
+            if text.strip():
+                chunks.append(f"--- Página {i} (OCR) ---\n\n{text.strip()}")
+        result = "\n\n".join(chunks)
+        if result:
+            logger.info("OCR exitoso: %d caracteres extraídos de %s", len(result), pdf_path.name)
+        else:
+            logger.warning("OCR no produjo texto en %s", pdf_path.name)
+        return result
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("OCR falló en %s: %s", pdf_path.name, exc)
+        return ""
+
+
+# ─────────────────────────────────────────────────────────────────
+# Función principal de extracción
+# ─────────────────────────────────────────────────────────────────
+
+def extract_text(pdf_path: Path, max_pages: int = 30) -> str:
+    """Extrae texto del PDF unido para enviarlo a la IA.
+
+    Estrategia:
+        1. pdfplumber con ``layout=True`` → preserva multi-columna.
+        2. Extrae y agrega tablas por página.
+        3. Limpia artefactos (números de página, watermarks, whitespace).
+        4. Si la densidad de texto es < ``_MIN_CHARS_PER_PAGE`` chars/página
+           → el PDF probablemente está escaneado → fallback OCR con pytesseract.
+
+    Args:
+        pdf_path: PDF a procesar (el merged que incluye los 3 PDFs).
         max_pages: tope defensivo. PDFs más largos se truncan.
 
     Returns:
-        Texto plano concatenado, separado por
-        ``"\\n\\n--- Página N ---\\n\\n"``. Cadena vacía si no se pudo extraer
-        nada (probable PDF escaneado).
+        Texto plano concatenado, separado por ``"\\n\\n--- Página N ---\\n\\n"``.
+        Cadena vacía solo si tanto la extracción digital como el OCR fallaron.
 
     Raises:
         FileNotFoundError: si el PDF no existe.
@@ -235,6 +320,8 @@ def extract_text(pdf_path: Path, max_pages: int = 30) -> str:
         raise FileNotFoundError(f"No existe el PDF: {pdf_path}")
 
     chunks: list[str] = []
+    pages_processed = 0
+
     with pdfplumber.open(pdf_path) as pdf:
         total_pages = len(pdf.pages)
         if total_pages > max_pages:
@@ -245,9 +332,10 @@ def extract_text(pdf_path: Path, max_pages: int = 30) -> str:
                 pdf_path.name,
             )
         limit = min(total_pages, max_pages)
+
         for idx in range(limit):
             try:
-                page_text = pdf.pages[idx].extract_text() or ""
+                page_text = _extract_page_text(pdf.pages[idx])
             except (ValueError, OSError) as exc:
                 logger.warning(
                     "Error extrayendo texto de página %d en %s: %s",
@@ -256,18 +344,47 @@ def extract_text(pdf_path: Path, max_pages: int = 30) -> str:
                     exc,
                 )
                 continue
+
+            pages_processed += 1
             if not page_text.strip():
                 continue
             chunks.append(f"--- Página {idx + 1} ---\n\n{page_text}")
 
-    if not chunks:
+    raw_text = "\n\n".join(chunks)
+    cleaned  = _clean_text(raw_text)
+
+    # Detección de PDF escaneado: si la densidad de texto es muy baja, intentar OCR.
+    if pages_processed > 0:
+        avg_chars = len(cleaned) / pages_processed
+        if avg_chars < _MIN_CHARS_PER_PAGE:
+            logger.warning(
+                "PDF posiblemente escaneado (%.0f chars/página promedio, umbral=%d). "
+                "Activando OCR en %s",
+                avg_chars,
+                _MIN_CHARS_PER_PAGE,
+                pdf_path.name,
+            )
+            ocr_text = _try_ocr(pdf_path, max_pages)
+            if ocr_text:
+                return _clean_text(ocr_text)
+            # Si OCR también falla, devolver lo poco que se extrajo
+            logger.error(
+                "Sin texto utilizable en %s. La IA recibirá contexto mínimo.",
+                pdf_path.name,
+            )
+
+    if not cleaned:
         logger.warning(
-            "No se pudo extraer texto de %s (¿PDF escaneado sin OCR?)",
+            "No se pudo extraer texto de %s (¿PDF escaneado sin OCR configurado?)",
             pdf_path.name,
         )
 
-    return "\n\n".join(chunks)
+    return cleaned
 
+
+# ─────────────────────────────────────────────────────────────────
+# Slug y renombrado
+# ─────────────────────────────────────────────────────────────────
 
 def slug_from_subject(asunto: str) -> str:
     """Genera un slug de archivo a partir del asunto de la notificación.
@@ -310,7 +427,7 @@ def slug_from_subject(asunto: str) -> str:
     text = unicodedata.normalize("NFKD", text)
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
 
-    # 3) Quitar marcadores "N°" / "N º" (con o sin espacio).
+    # 3) Quitar marcadores "N°" / "N º".
     text = re.sub(r"N\s*[°ºo]\s*", "", text, flags=re.IGNORECASE)
 
     # 4) Reemplazar separadores por guion.

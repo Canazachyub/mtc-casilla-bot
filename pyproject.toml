@@ -51,6 +51,13 @@ serve = [
 export = [
     "python-docx>=1.1.0",
 ]
+# OCR para PDFs escaneados (requiere Tesseract-OCR instalado en el sistema con idioma 'spa')
+# Instalación: pip install pytesseract pdf2image
+# Tesseract en Windows: https://github.com/UB-Mannheim/tesseract/wiki
+ocr = [
+    "pytesseract>=0.3.10",
+    "pdf2image>=1.17.0",
+]
 # Tests
 dev = [
     "pytest>=8.3.0",
