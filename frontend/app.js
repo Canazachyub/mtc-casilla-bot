@@ -272,6 +272,40 @@ async function handleProgresoChange(id, progreso) {
   }
 }
 
+/* ──────────────────────────── Tarea save ──────────────────────── */
+
+const TAREAS_CATALOGO = [
+  'comunicar en WhatsApp', 'descargos', 'remitir expedientes', 'subsanar observaciones',
+  'inspección', 'cumplir con pago', 'carta de ampliación', 'cumplo requerimiento',
+  'hacer algo?', 'nueva solicitud', 'remitir información', 'dar seguimiento',
+  'archivar', 'baja de ing', 'pago de infracción', 'no iniciar PAS', 'carta', 'apelación',
+];
+
+async function saveTarea(id, tareaStr) {
+  const btn    = document.getElementById('btn-save-tarea');
+  const status = document.getElementById('tarea-status');
+  if (btn) btn.disabled = true;
+  if (status) status.textContent = 'Guardando...';
+
+  try {
+    await api('update_status', { id, campo: 'tarea', valor: tareaStr });
+    const item = state.items.find(i => i.id === id);
+    if (item) item.tarea = tareaStr;
+    // Actualizar los pills en la tabla sin recargar
+    document.querySelectorAll(`tr[data-id="${id}"] .col-tarea`).forEach(td => {
+      td.innerHTML = tareasBadges(tareaStr);
+    });
+    if (status) status.textContent = '✓ Guardado';
+    showToast('Tareas guardadas', 'ok');
+    setTimeout(() => { if (status) status.textContent = ''; }, 2500);
+  } catch (err) {
+    if (status) status.textContent = '⚠ Error';
+    showToast('Error al guardar tareas: ' + err.message, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 /* ──────────────────────────── Notas save ──────────────────────── */
 
 async function saveNotas(id, notas) {
@@ -349,12 +383,47 @@ async function openDetail(id) {
 
 /* ──────────────────────────── Detalle tab ─────────────────────── */
 
-function renderDetailTab(d) {
-  const tareas = (d.tarea || '').split(',').map(t => t.trim()).filter(Boolean);
-  const tareasHtml = tareas.length
-    ? tareas.map(t => `<span class="tag-tarea">${escapeHtml(t)}</span>`).join(' ')
-    : '<span class="muted">—</span>';
+function renderTareaEditor(currentTareaStr) {
+  const selected = new Set(
+    (currentTareaStr || '').split(',').map(t => t.trim()).filter(Boolean)
+  );
+  const checks = TAREAS_CATALOGO.map(t => `
+    <label class="tarea-check">
+      <input type="checkbox" value="${escapeHtml(t)}"${selected.has(t) ? ' checked' : ''}>
+      <span>${escapeHtml(t)}</span>
+    </label>
+  `).join('');
+  return `
+    <div class="tarea-editor">
+      <div class="tarea-grid">${checks}</div>
+      <div class="notas-actions" style="margin-top:0.6rem">
+        <button id="btn-save-tarea">💾 Guardar tareas</button>
+        <span id="tarea-status" class="muted small"></span>
+      </div>
+    </div>
+  `;
+}
 
+function renderResumenEstructurado(d) {
+  const tiene = d.tipo_acto || d.accion_requerida || d.consecuencias || d.fundamento_legal;
+  if (!tiene) return '';
+
+  const row = (label, val, icon) => val
+    ? `<div class="re-row"><span class="re-label">${icon} ${label}</span><span class="re-val">${escapeHtml(val)}</span></div>`
+    : '';
+
+  return `
+    <h3>🧩 Resumen estructurado</h3>
+    <div class="resumen-estructurado">
+      ${row('Tipo de acto', d.tipo_acto, '📄')}
+      ${row('Acción requerida', d.accion_requerida, '⚡')}
+      ${row('Consecuencias', d.consecuencias, '⚠️')}
+      ${row('Fundamento legal', d.fundamento_legal, '⚖️')}
+    </div>
+  `;
+}
+
+function renderDetailTab(d) {
   const progreso = d.progreso || 'NO INICIADO';
   const progresoOptions = ALLOWED_PROGRESO.map(p =>
     `<option value="${p}"${progreso === p ? ' selected' : ''}>${PROGRESO_LABELS[p]}</option>`
@@ -389,11 +458,13 @@ function renderDetailTab(d) {
       </div>
     </div>
 
-    <h3>🗂 Tareas</h3>
-    <div style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-bottom:0.5rem">${tareasHtml}</div>
-
     <h3>📋 Resumen</h3>
     <p style="line-height:1.7">${escapeHtml(d.resumen || 'Sin resumen.')}</p>
+
+    ${renderResumenEstructurado(d)}
+
+    <h3>🗂 Tareas <span class="muted small" style="font-weight:400">(seleccioná las que aplican)</span></h3>
+    ${renderTareaEditor(d.tarea)}
 
     ${d.drive_view_url ? `
       <h3>📎 PDF unificado</h3>
@@ -418,6 +489,15 @@ function bindDetailTabEvents(id, detail) {
   if (progresoSel) {
     progresoSel.addEventListener('change', e => {
       handleProgresoChange(id, e.target.value);
+    });
+  }
+
+  const btnSaveTarea = document.getElementById('btn-save-tarea');
+  if (btnSaveTarea) {
+    btnSaveTarea.addEventListener('click', () => {
+      const checks  = document.querySelectorAll('.tarea-grid input[type="checkbox"]:checked');
+      const tareaStr = [...checks].map(c => c.value).join(', ');
+      saveTarea(id, tareaStr);
     });
   }
 

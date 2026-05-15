@@ -219,7 +219,7 @@ function handleUpdateStatus_(params) {
   if (!campo) return { error: 'falta_campo', hint: 'Enviar campo=progreso|estado|notas y valor=X' };
   if (valor === null || valor === undefined) return { error: 'falta_valor' };
 
-  const CAMPOS_EDITABLES = ['estado', 'progreso', 'notas'];
+  const CAMPOS_EDITABLES = ['estado', 'progreso', 'notas', 'tarea'];
   if (!CAMPOS_EDITABLES.includes(campo))
     return { error: 'campo_no_editable', allowed: CAMPOS_EDITABLES };
 

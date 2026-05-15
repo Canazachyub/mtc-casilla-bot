@@ -31,8 +31,12 @@ class ExtractionResult(BaseModel):
     Attributes:
         documento: nombre oficial del documento (ej: "CARTA N° 000476-...").
         emisor: sigla del organismo emisor (SUTRAN, MTC, DGAT, OEFA, ...).
+        casilla_origen: sistema que emitió la notificación (MTC, SUTRAN,
+            Ministerio Público, Poder Judicial, SUNAT, OSINERGMIN, etc.).
         asunto: 1-2 líneas describiendo el propósito del documento.
         resumen: 2-3 líneas con la síntesis del cuerpo.
+        referencia: documento(s) referenciado(s): Hoja de Ruta, Expediente, etc.
+        tarea: lista de tareas requeridas (del catálogo de 18 opciones).
         requiere_respuesta: ``True`` si el documento solicita acción del
             destinatario; ``False`` si es solo informativo.
         plazo_dias_habiles: días hábiles otorgados; ``0`` si no aplica.
@@ -43,11 +47,19 @@ class ExtractionResult(BaseModel):
 
     documento: str = ""
     emisor: str = ""
+    casilla_origen: str = ""
     asunto: str = ""
     resumen: str = ""
+    referencia: str = ""
+    tarea: list[str] = []
     requiere_respuesta: bool = False
     plazo_dias_habiles: int = 0
     confianza: Literal["alta", "media", "baja"] = "media"
+    # Resumen estructurado
+    tipo_acto: str = ""
+    accion_requerida: str = ""
+    consecuencias: str = ""
+    fundamento_legal: str = ""
     # Metadata del provider (no proviene del LLM, lo agrega el caller).
     modelo_ia: str = ""
 
@@ -64,29 +76,65 @@ _SYSTEM_PROMPT = (
 )
 
 
+_TAREAS_CATALOGO = (
+    "apelación, descargos, remitir expedientes, subsanar observaciones, "
+    "inspección, cumplir con pago, carta de ampliación, cumplo requerimiento, "
+    "hacer algo?, nueva solicitud, comunicar en WhatsApp, remitir información, "
+    "dar seguimiento, archivar, baja de ing, pago de infracción, no iniciar PAS, carta"
+)
+
 _USER_PROMPT_TEMPLATE = """\
-Analiza la siguiente notificación y devuelve un JSON con esta forma exacta:
+Analiza la siguiente notificación oficial peruana y devuelve SOLO un JSON con esta forma exacta:
 
 {{
-  "documento": "<nombre oficial, ej: CARTA N° 000476-CR-2026-SUTRAN/06.3.4-SGFSV>",
-  "emisor": "<emisor — SUTRAN, MTC, DGAT, OEFA, etc.>",
-  "asunto": "<1-2 líneas describiendo el propósito>",
-  "resumen": "<2-3 líneas con la síntesis del cuerpo>",
+  "documento": "<nombre oficial completo, ej: CARTA N° 000476-CR-2026-SUTRAN/06.3.4-SGFSV>",
+  "emisor": "<sigla del organismo que emite — SUTRAN, MTC, OSINERGMIN, INDECOPI, etc.>",
+  "casilla_origen": "<sistema electrónico de origen — MTC, SUTRAN, Ministerio Público, Poder Judicial, SUNAT, OSINERGMIN, ONPE, JNE u otro>",
+  "asunto": "<1-2 líneas describiendo el propósito del documento>",
+  "resumen": "<2-3 líneas con la síntesis del cuerpo del documento>",
+  "referencia": "<números de Hoja de Ruta (ej: E-135789-2026), Expediente Administrativo, o cartas previas mencionadas como referencia; vacío si no hay>",
+  "tarea": [<lista de tareas requeridas, SOLO usando valores del catálogo>],
   "requiere_respuesta": <true|false — true si exige acción del destinatario>,
   "plazo_dias_habiles": <int — días hábiles desde la notificación; 0 si no aplica>,
-  "confianza": "<alta|media|baja — tu nivel de seguridad en la extracción>"
+  "confianza": "<alta|media|baja — tu nivel de seguridad en la extracción>",
+  "tipo_acto": "<tipo del acto administrativo: CARTA, OFICIO, RESOLUCIÓN COACTIVA, RESOLUCIÓN DIRECTORAL, ACTA DE INSPECCIÓN, INFORME, NOTIFICACIÓN DE INFRACCIÓN, REQUERIMIENTO, etc.>",
+  "accion_requerida": "<1-2 oraciones describiendo exactamente QUÉ debe hacer el destinatario (no el contexto, la acción concreta)>",
+  "consecuencias": "<qué ocurre si no se actúa: multa, inicio de PAS, sanción administrativa, archivo — vacío si no se menciona consecuencia explícita>",
+  "fundamento_legal": "<artículos, reglamentos o normas citadas explícitamente, ej: Art. 23 D.S. 025-2008-MTC — vacío si no hay>"
 }}
 
-REGLAS IMPORTANTES:
-- Si el documento dice "PRE-INFORME", "INFORME", "RESOLUCIÓN", "AUTO" o similar,
-  eso forma parte del nombre del documento.
-- "plazo_dias_habiles": busca frases como "5 días hábiles", "diez (10) días",
-  "tres días". Si no menciona plazo, devolvé 0.
-- "requiere_respuesta": true si el documento solicita o requiere algo del
-  destinatario (descargo, expedientes, comparecencia, etc.). false si es solo
-  informativo.
-- "confianza": "alta" si todos los campos son claros del texto. "media" si
-  dedujiste algo. "baja" si el texto es ambiguo o incompleto.
+CATÁLOGO DE TAREAS (usa SOLO estos valores exactos en el array "tarea"):
+{tareas}
+
+GUÍA DE SELECCIÓN DE TAREAS:
+- "comunicar en WhatsApp": incluir SIEMPRE salvo que la notificación sea puramente archival.
+- "descargos": el documento abre PAS o solicita presentar descargos.
+- "remitir expedientes": pide expedientes técnicos y/o filmaciones de ITV.
+- "apelación": se impone sanción/multa con plazo para interponer apelación.
+- "pago de infracción": se impone multa que debe pagarse.
+- "subsanar observaciones": hay observaciones a subsanar en solicitud.
+- "carta de ampliación": plazo es corto (≤3 días hábiles) y se puede pedir más.
+- "cumplo requerimiento": ya se va a presentar lo solicitado sin ampliación.
+- "remitir información": pide información general (no expedientes técnicos).
+- "archivar": notificación informa que el proceso fue archivado (sin acción).
+- "dar seguimiento": proceso judicial o PAS en curso sin acción inmediata.
+- "cumplir con pago": pide pago de deuda o multa coactiva.
+- "baja de ing": hay que tramitar baja de personal en SINARETT.
+- "no iniciar PAS": se puede pedir que no se inicie el procedimiento sancionador.
+- "nueva solicitud": hay que presentar una nueva solicitud.
+- "inspección": hay una inspección programada o en curso.
+- "carta": hay que redactar y enviar una carta simple de respuesta.
+- "hacer algo?": solo si la acción es completamente incierta.
+
+REGLAS ADICIONALES:
+- "documento": incluir el tipo (CARTA, OFICIO, RESOLUCIÓN, ACTA, etc.) + número completo.
+- "referencia": extraer SOLO los identificadores explícitamente mencionados como referencia en el documento (no inventar).
+- "plazo_dias_habiles": busca "X días hábiles", "X (N) días", etc. Devolvé 0 si no hay plazo.
+- "casilla_origen": si el número de documento contiene "MTC/" → "MTC"; "SUTRAN" → "SUTRAN"; "MP-FN" o "MPFN" → "Ministerio Público"; "PNP" → "Ministerio del Interior"; si es SUNAT/OSINERGMIN/INDECOPI/ONPE/JNE → usar ese nombre.
+- "tipo_acto": extraer del encabezado o número del documento (CARTA, OFICIO, RESOLUCIÓN, ACTA, etc.).
+- "accion_requerida": sintetizar la acción específica pedida al destinatario (no el contexto general).
+- "consecuencias": buscar frases como "bajo apercibimiento de...", "de no cumplir...", "se impondrá...", "se iniciará PAS...".
+- "fundamento_legal": citar solo normas mencionadas explícitamente en el texto.
 
 TEXTO DE LA NOTIFICACIÓN:
 \"\"\"
@@ -110,7 +158,7 @@ def _truncate(texto: str) -> str:
 
 def _build_user_prompt(texto: str) -> str:
     """Renderiza el template de usuario sustituyendo el texto del documento."""
-    return _USER_PROMPT_TEMPLATE.format(texto=texto)
+    return _USER_PROMPT_TEMPLATE.format(texto=texto, tareas=_TAREAS_CATALOGO)
 
 
 async def extract_with_deepseek(

@@ -666,6 +666,62 @@ footer {
   width: auto;
 }
 
+/* ─── Tarea editor (checkboxes) ─── */
+.tarea-editor { margin-top: 0.3rem; }
+.tarea-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.4rem 1rem;
+}
+.tarea-check {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text);
+  user-select: none;
+  padding: 0.2rem 0;
+}
+.tarea-check input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--primary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.tarea-check:hover span { color: var(--primary); }
+
+/* ─── Resumen estructurado ─── */
+.resumen-estructurado {
+  background: var(--bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 0.9rem 1rem;
+  margin-bottom: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.re-row {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  align-items: baseline;
+}
+.re-label {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+.re-val { line-height: 1.5; }
+@media (max-width: 600px) {
+  .re-row { grid-template-columns: 1fr; gap: 0.15rem; }
+  .tarea-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
 /* ─── Responsive ─── */
 @media (max-width: 900px) {
   .metrics { grid-template-columns: repeat(2, 1fr); }

@@ -368,7 +368,11 @@ def _parse_since(since: str) -> date | None:
         return None
     if since.endswith("d") and since[:-1].isdigit():
         return today - timedelta(days=int(since[:-1]))
-    console.print(f"[red]✗ --since inválido: {since!r}[/red]")
+    try:
+        return date.fromisoformat(since)
+    except ValueError:
+        pass
+    console.print(f"[red]✗ --since inválido: {since!r}. Formatos válidos: today, yesterday, all, 3d, YYYY-MM-DD[/red]")
     raise typer.Exit(code=1)
 
 
@@ -468,7 +472,7 @@ async def _process_notification(  # noqa: PLR0911,PLR0912,PLR0913,PLR0915 — pi
     from mtc_bot.scraper.inbox import click_item
 
     sheet_id_value = _build_sheet_id(item.ruc, item.notification_id)
-    asunto_short = item.asunto[:50]
+    asunto_short = f"[{item.fecha}] {item.asunto[:40]}"
 
     # 1) Idempotencia
     try:
@@ -563,19 +567,38 @@ async def _process_notification(  # noqa: PLR0911,PLR0912,PLR0913,PLR0915 — pi
         timespec="seconds",
     )
     plazo_venc = _estimate_vencimiento(item.fecha, extraction.plazo_dias_habiles)
+
+    # Sede: usar la del RUC, pero si es LIDERSUR Puno y el texto menciona
+    # Puerto Maldonado, usar esa sede en su lugar.
+    sede = creds.sede
+    if "REVISIONES TECNICAS" in creds.empresa.upper():
+        texto_lower = (extraction.asunto + " " + extraction.resumen).lower()
+        if "maldonado" in texto_lower or "madre de dios" in texto_lower:
+            sede = "Puerto Maldonado"
+
     row: dict[str, str | int | float | bool | None] = {
         "id": sheet_id_value,
         "timestamp_proceso": timestamp_proceso,
         "fecha_notificacion": item.fecha.isoformat(),
+        "lectura_notificacion": item.fecha.isoformat(),
         "ruc": item.ruc,
         "empresa": creds.empresa,
+        "sede": sede,
         "documento": extraction.documento or item.asunto,
         "emisor": extraction.emisor or item.emisor,
+        "casilla_origen": extraction.casilla_origen or "MTC",
         "asunto": extraction.asunto or item.asunto,
+        "referencia": extraction.referencia,
         "resumen": extraction.resumen,
+        "tipo_acto": extraction.tipo_acto,
+        "accion_requerida": extraction.accion_requerida,
+        "consecuencias": extraction.consecuencias,
+        "fundamento_legal": extraction.fundamento_legal,
+        "tarea": ", ".join(extraction.tarea),
         "requiere_respuesta": extraction.requiere_respuesta,
         "plazo_dias_habiles": extraction.plazo_dias_habiles,
         "plazo_vencimiento": plazo_venc,
+        "progreso": "NO INICIADO",
         "confianza_ia": extraction.confianza,
         "modelo_ia": extraction.modelo_ia,
         "drive_file_id": uploaded.file_id,
@@ -640,11 +663,12 @@ async def _process_one_ruc(  # noqa: PLR0913 — función privada del CLI
                 await _take_screenshot(page, shots_dir / "login_failed.png", "login_failed")
             return 0, 0
 
-        if not headless:
-            await _take_screenshot(page, shots_dir / "inbox.png", "inbox")
-
         items = await list_inbox(page, creds.ruc, since=since_date, limit=limit)
         console.print(f"  {creds.empresa[:40]}: {len(items)} notif para procesar")
+        if not headless:
+            from mtc_bot.scraper.inbox import _navigate_to_page
+            await _navigate_to_page(page, 1)  # volver a pág 1 para capturar ítems recientes
+            await _take_screenshot(page, shots_dir / "inbox.png", "inbox")
 
         if dry_run:
             for it in items:

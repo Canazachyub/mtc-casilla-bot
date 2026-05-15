@@ -57,6 +57,7 @@ class RucCredentials(BaseModel):
     sol_clave: str | None = None
     representante_legal: str = DEFAULT_REPRESENTANTE_LEGAL
     activo: bool = True
+    sede: str = ""
 
     @field_validator("ruc")
     @classmethod
@@ -138,6 +139,16 @@ class Attachment(BaseModel):
 
 NotificationEstado = Literal["pendiente", "en_revision", "respondida", "archivada"]
 
+NotificationProgreso = Literal["NO INICIADO", "AGENDAR", "EN REVISIÓN", "PRESENTADO"]
+
+TAREAS_VALIDAS: frozenset[str] = frozenset({
+    "apelación", "descargos", "remitir expedientes", "subsanar observaciones",
+    "inspección", "cumplir con pago", "carta de ampliación", "cumplo requerimiento",
+    "hacer algo?", "nueva solicitud", "comunicar en WhatsApp", "remitir información",
+    "dar seguimiento", "archivar", "baja de ing", "pago de infracción",
+    "no iniciar PAS", "carta",
+})
+
 
 class Notification(BaseModel):
     """Notificación procesada del portal MTC.
@@ -151,14 +162,24 @@ class Notification(BaseModel):
     id: str
     ruc: str
     empresa: str
+    sede: str = ""
     fecha_notificacion: datetime
+    lectura_notificacion: datetime | None = None
     documento: str
     emisor: str = ""
+    casilla_origen: str = ""
     asunto: str = ""
+    referencia: str = ""
+    resumen: str = ""
+    tipo_acto: str = ""
+    accion_requerida: str = ""
+    consecuencias: str = ""
+    fundamento_legal: str = ""
+    tarea: list[str] = Field(default_factory=list)
     plazo_vencimiento: date | None = None
     dias_restantes: int | None = None
+    progreso: NotificationProgreso = "NO INICIADO"
     requiere_respuesta: bool = False
-    resumen: str = ""
     notas: str = ""
     confianza_ia: float | None = None
     modelo_ia: str = ""
@@ -216,6 +237,7 @@ def load_rucs(csv_path: Path) -> list[RucCredentials]:
                     "sol_usuario": (row.get("sol_usuario") or "").strip() or None,
                     "sol_clave": (row.get("sol_clave") or "").strip() or None,
                     "activo": _parse_bool(row.get("activo")),
+                "sede": (row.get("sede") or "").strip(),
                 }
                 rep = (row.get("representante_legal") or "").strip()
                 if rep:
