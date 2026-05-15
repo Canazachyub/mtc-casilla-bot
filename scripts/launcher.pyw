@@ -1,361 +1,306 @@
 """
 MTC Casilla Bot — Panel de Control
-Lanzador gráfico para Windows. Doble-click para abrir.
-Sin consola (.pyw). Requiere Python 3.11+ y uv instalado.
+Lanzador grafico para Windows. Doble-click en Abrir-Panel-MTC.bat para abrir.
 """
 import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox
+from tkinter import ttk, scrolledtext
 import subprocess
 import threading
 import webbrowser
 import os
 import sys
 import queue
+import re
 from pathlib import Path
 from datetime import datetime
 
-# ── Rutas ──────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 LOGS_DIR     = PROJECT_ROOT / 'logs'
 
+# ── Paleta de colores ──────────────────────────────────────────────
+BG      = '#0f172a'
+SURFACE = '#1e293b'
+SURF2   = '#334155'
+BORDER  = '#475569'
+TEXT    = '#f1f5f9'
+MUTED   = '#94a3b8'
+PRIMARY = '#3b82f6'
+OK      = '#22c55e'
+WARN    = '#f59e0b'
+ERROR   = '#ef4444'
+
+
 def find_uv() -> str:
-    """Busca el ejecutable uv en rutas comunes de Windows."""
     candidates = [
         Path(os.environ.get('USERPROFILE', '')) / '.local' / 'bin' / 'uv.exe',
         Path(os.environ.get('LOCALAPPDATA', '')) / 'uv' / 'bin' / 'uv.exe',
-        Path('C:/Users') / os.environ.get('USERNAME', '') / '.local' / 'bin' / 'uv.exe',
     ]
     for p in candidates:
         if p.exists():
             return str(p)
-    return 'uv'  # Fallback: esperar que esté en PATH
+    return 'uv'
+
 
 UV = find_uv()
 
-# ── Colores ─────────────────────────────────────────────────────────
-BG       = '#0f172a'
-SURFACE  = '#1e293b'
-SURFACE2 = '#334155'
-BORDER   = '#475569'
-TEXT     = '#f1f5f9'
-MUTED    = '#94a3b8'
-PRIMARY  = '#3b82f6'
-OK       = '#22c55e'
-WARN     = '#f59e0b'
-ERROR    = '#ef4444'
-PURPLE   = '#7c3aed'
+
+def ts() -> str:
+    return datetime.now().strftime('%H:%M:%S')
 
 
-class BotLauncher:
+class App:
     def __init__(self, root: tk.Tk):
         self.root    = root
         self.process = None
         self.running = False
-        self.log_q   = queue.Queue()
+        self.q       = queue.Queue()
+        self._build()
+        self._poll()
+        self._refresh_last_run()
 
-        self._setup_window()
-        self._build_ui()
-        self._poll_log_queue()
-        self._update_last_run()
-
-    # ── Window ────────────────────────────────────────────────────
-    def _setup_window(self):
+    # ── Construccion de la UI ─────────────────────────────────────
+    def _build(self):
         self.root.title('MTC Casilla Bot — Panel de Control')
         self.root.geometry('860x640')
-        self.root.minsize(700, 500)
+        self.root.minsize(720, 500)
         self.root.configure(bg=BG)
-        self.root.resizable(True, True)
-        try:
-            self.root.iconbitmap(default='')
-        except Exception:
-            pass
 
-    # ── UI ────────────────────────────────────────────────────────
-    def _build_ui(self):
         # Header
         hdr = tk.Frame(self.root, bg=SURFACE, pady=10)
         hdr.pack(fill='x')
-        tk.Label(hdr, text='📬 MTC Casilla Bot', font=('Segoe UI', 14, 'bold'),
-                 bg=SURFACE, fg=TEXT).pack(side='left', padx=16)
-        tk.Label(hdr, text='Panel de Control', font=('Segoe UI', 10),
-                 bg=SURFACE, fg=MUTED).pack(side='left')
+        tk.Label(hdr, text='📬  MTC Casilla Bot',
+                 font=('Segoe UI', 14, 'bold'), bg=SURFACE, fg=TEXT).pack(side='left', padx=16)
+        tk.Label(hdr, text='Panel de Control',
+                 font=('Segoe UI', 10), bg=SURFACE, fg=MUTED).pack(side='left')
 
-        # Status bar
-        status_frame = tk.Frame(self.root, bg=SURFACE2, pady=6)
-        status_frame.pack(fill='x')
+        # Barra de estado
+        sb = tk.Frame(self.root, bg=SURF2, pady=5)
+        sb.pack(fill='x')
+        self.lbl_status = tk.Label(sb, text='● Inactivo',
+                                   font=('Segoe UI', 9, 'bold'), bg=SURF2, fg=MUTED)
+        self.lbl_status.pack(side='left', padx=14)
+        self.lbl_last = tk.Label(sb, text='Última ejecución: —',
+                                 font=('Segoe UI', 9), bg=SURF2, fg=MUTED)
+        self.lbl_last.pack(side='left', padx=6)
 
-        self.lbl_status = tk.Label(status_frame, text='● Inactivo',
-                                   font=('Segoe UI', 9, 'bold'), bg=SURFACE2, fg=MUTED)
-        self.lbl_status.pack(side='left', padx=16)
-
-        self.lbl_last = tk.Label(status_frame, text='Última ejecución: —',
-                                 font=('Segoe UI', 9), bg=SURFACE2, fg=MUTED)
-        self.lbl_last.pack(side='left', padx=8)
-
-        # ── Opciones ──
+        # Opciones
         opt = tk.LabelFrame(self.root, text='  Opciones  ', font=('Segoe UI', 9),
                             bg=BG, fg=MUTED, bd=1, relief='flat', padx=12, pady=8)
-        opt.pack(fill='x', padx=16, pady=(12, 0))
+        opt.pack(fill='x', padx=14, pady=(10, 0))
 
-        tk.Label(opt, text='Desde:', bg=BG, fg=TEXT, font=('Segoe UI', 9)).grid(row=0, col=0, sticky='w')
+        tk.Label(opt, text='Desde:', bg=BG, fg=TEXT,
+                 font=('Segoe UI', 9)).grid(row=0, column=0, sticky='w')
+
         self.var_since = tk.StringVar(value='today')
-        since_cb = ttk.Combobox(opt, textvariable=self.var_since, width=10,
-                                values=['today', 'yesterday', 'all'], state='readonly')
-        since_cb.grid(row=0, column=1, padx=(4, 20), sticky='w')
+        ttk.Combobox(opt, textvariable=self.var_since, width=12,
+                     values=['today', 'yesterday', 'all'],
+                     state='readonly').grid(row=0, column=1, padx=(4, 20), sticky='w')
 
-        self.var_dryrun = tk.BooleanVar(value=False)
-        tk.Checkbutton(opt, text='Dry-run (solo vista previa, sin guardar)',
-                       variable=self.var_dryrun, bg=BG, fg=TEXT,
-                       selectcolor=SURFACE2, activebackground=BG,
+        self.var_dry = tk.BooleanVar(value=False)
+        tk.Checkbutton(opt, text='Dry-run (solo vista previa)',
+                       variable=self.var_dry, bg=BG, fg=TEXT,
+                       selectcolor=SURF2, activebackground=BG,
                        font=('Segoe UI', 9)).grid(row=0, column=2, sticky='w')
 
         self.var_headed = tk.BooleanVar(value=False)
-        tk.Checkbutton(opt, text='Headed (ver el navegador)',
+        tk.Checkbutton(opt, text='Headed (ver navegador + capturas)',
                        variable=self.var_headed, bg=BG, fg=TEXT,
-                       selectcolor=SURFACE2, activebackground=BG,
+                       selectcolor=SURF2, activebackground=BG,
                        font=('Segoe UI', 9)).grid(row=0, column=3, padx=(20, 0), sticky='w')
 
-        # ── Botones principales ──
-        btn_frame = tk.Frame(self.root, bg=BG)
-        btn_frame.pack(fill='x', padx=16, pady=10)
+        # Botones
+        bf = tk.Frame(self.root, bg=BG)
+        bf.pack(fill='x', padx=14, pady=10)
 
-        self.btn_run = tk.Button(
-            btn_frame, text='▶  Ejecutar ahora', font=('Segoe UI', 11, 'bold'),
-            bg=PRIMARY, fg='white', relief='flat', padx=20, pady=8,
-            cursor='hand2', command=self.run_bot, activebackground='#2563eb',
-            activeforeground='white',
-        )
+        self.btn_run = self._btn(bf, '▶  Ejecutar ahora', PRIMARY, self.do_run, bold=True)
         self.btn_run.pack(side='left')
 
-        self.btn_stop = tk.Button(
-            btn_frame, text='■  Detener', font=('Segoe UI', 10),
-            bg=ERROR, fg='white', relief='flat', padx=14, pady=8,
-            cursor='hand2', command=self.stop_bot, state='disabled',
-            activebackground='#dc2626', activeforeground='white',
-        )
-        self.btn_stop.pack(side='left', padx=(8, 0))
+        self.btn_stop = self._btn(bf, '■  Detener', ERROR, self.do_stop)
+        self.btn_stop.pack(side='left', padx=(6, 0))
+        self.btn_stop.configure(state='disabled')
 
-        tk.Button(
-            btn_frame, text='📊  Dashboard', font=('Segoe UI', 10),
-            bg=SURFACE2, fg=TEXT, relief='flat', padx=14, pady=8,
-            cursor='hand2', command=self.open_dashboard,
-            activebackground=BORDER, activeforeground=TEXT,
-        ).pack(side='left', padx=(8, 0))
+        self._btn(bf, '🔍  Doctor',    SURF2, self.do_doctor).pack(side='left', padx=(6, 0))
+        self._btn(bf, '📊  Dashboard', SURF2, self.open_dashboard).pack(side='left', padx=(6, 0))
+        self._btn(bf, '📁  Logs',      SURF2, self.open_logs).pack(side='left', padx=(6, 0))
+        self._btn(bf, '📸  Capturas',  SURF2, self.open_shots).pack(side='left', padx=(6, 0))
 
-        tk.Button(
-            btn_frame, text='📁  Logs', font=('Segoe UI', 10),
-            bg=SURFACE2, fg=TEXT, relief='flat', padx=14, pady=8,
-            cursor='hand2', command=self.open_logs_dir,
-            activebackground=BORDER, activeforeground=TEXT,
-        ).pack(side='left', padx=(8, 0))
-
-        tk.Button(
-            btn_frame, text='🔍  Doctor', font=('Segoe UI', 10),
-            bg=SURFACE2, fg=TEXT, relief='flat', padx=14, pady=8,
-            cursor='hand2', command=self.run_doctor,
-            activebackground=BORDER, activeforeground=TEXT,
-        ).pack(side='left', padx=(8, 0))
-
-        # ── Progreso ──
-        prog_frame = tk.Frame(self.root, bg=BG)
-        prog_frame.pack(fill='x', padx=16, pady=(0, 4))
-
-        self.progress = ttk.Progressbar(prog_frame, mode='indeterminate', length=400)
+        # Progreso
+        pf = tk.Frame(self.root, bg=BG)
+        pf.pack(fill='x', padx=14, pady=(0, 4))
+        self.progress = ttk.Progressbar(pf, mode='indeterminate')
         self.progress.pack(side='left', fill='x', expand=True)
-
-        self.lbl_ruc = tk.Label(prog_frame, text='', font=('Segoe UI', 8),
-                                bg=BG, fg=MUTED)
+        self.lbl_ruc = tk.Label(pf, text='', font=('Segoe UI', 8), bg=BG, fg=MUTED)
         self.lbl_ruc.pack(side='left', padx=(8, 0))
 
-        # ── Log output ──
-        log_frame = tk.LabelFrame(self.root, text='  Registro de ejecución  ',
-                                  font=('Segoe UI', 9), bg=BG, fg=MUTED,
-                                  bd=1, relief='flat', padx=4, pady=4)
-        log_frame.pack(fill='both', expand=True, padx=16, pady=(4, 8))
+        # Log
+        lf = tk.LabelFrame(self.root, text='  Registro de ejecución  ',
+                            font=('Segoe UI', 9), bg=BG, fg=MUTED, bd=1, relief='flat',
+                            padx=4, pady=4)
+        lf.pack(fill='both', expand=True, padx=14, pady=(2, 6))
 
-        self.log_text = scrolledtext.ScrolledText(
-            log_frame,
-            font=('Consolas', 9),
-            bg='#020817', fg=TEXT,
-            insertbackground=TEXT,
-            relief='flat',
-            state='disabled',
-            wrap='word',
-        )
-        self.log_text.pack(fill='both', expand=True)
-
-        # Tags para colores en el log
-        self.log_text.tag_config('INFO',  foreground=TEXT)
-        self.log_text.tag_config('OK',    foreground=OK)
-        self.log_text.tag_config('WARN',  foreground=WARN)
-        self.log_text.tag_config('ERROR', foreground=ERROR)
-        self.log_text.tag_config('DIM',   foreground=MUTED)
-        self.log_text.tag_config('RUC',   foreground='#93c5fd')
+        self.log = scrolledtext.ScrolledText(
+            lf, font=('Consolas', 9), bg='#020817', fg=TEXT,
+            insertbackground=TEXT, relief='flat', state='disabled', wrap='word')
+        self.log.pack(fill='both', expand=True)
+        self.log.tag_config('OK',    foreground=OK)
+        self.log.tag_config('WARN',  foreground=WARN)
+        self.log.tag_config('ERROR', foreground=ERROR)
+        self.log.tag_config('DIM',   foreground=MUTED)
+        self.log.tag_config('RUC',   foreground='#93c5fd')
 
         # Footer
-        footer = tk.Frame(self.root, bg=SURFACE, pady=4)
-        footer.pack(fill='x', side='bottom')
-        tk.Label(footer, text=f'Proyecto: {PROJECT_ROOT}',
-                 font=('Segoe UI', 8), bg=SURFACE, fg=MUTED).pack(side='left', padx=12)
-        tk.Button(footer, text='Limpiar log', font=('Segoe UI', 8),
-                  bg=SURFACE, fg=MUTED, relief='flat', bd=0,
-                  cursor='hand2', command=self.clear_log).pack(side='right', padx=12)
+        ft = tk.Frame(self.root, bg=SURFACE, pady=4)
+        ft.pack(fill='x', side='bottom')
+        tk.Label(ft, text=str(PROJECT_ROOT), font=('Segoe UI', 8),
+                 bg=SURFACE, fg=MUTED).pack(side='left', padx=12)
+        tk.Button(ft, text='Limpiar', font=('Segoe UI', 8), bg=SURFACE, fg=MUTED,
+                  relief='flat', bd=0, cursor='hand2',
+                  command=self._clear_log).pack(side='right', padx=12)
+
+    def _btn(self, parent, text, color, cmd, bold=False):
+        font = ('Segoe UI', 10, 'bold') if bold else ('Segoe UI', 10)
+        return tk.Button(parent, text=text, font=font, bg=color, fg='white',
+                         relief='flat', padx=14, pady=7, cursor='hand2',
+                         command=cmd, activebackground=color, activeforeground='white')
 
     # ── Acciones ─────────────────────────────────────────────────
-    def run_bot(self):
+    def do_run(self):
         if self.running:
             return
-
         cmd = [UV, 'run', '--project', str(PROJECT_ROOT), 'mtc-bot', 'run',
                '--since', self.var_since.get()]
-        if self.var_dryrun.get():
+        if self.var_dry.get():
             cmd.append('--dry-run')
         if self.var_headed.get():
             cmd.append('--headed')
 
-        self._set_running(True)
-        self.log_append(f'\n{"─"*60}\n', 'DIM')
-        self.log_append(f'[{now()}] Iniciando: {" ".join(cmd[2:])}\n', 'DIM')
+        self._set_busy(True)
+        self._log(f'\n{"─"*60}\n', 'DIM')
+        self._log(f'[{ts()}] Ejecutando: {" ".join(cmd[3:])}\n', 'DIM')
+        self._spawn(cmd)
 
-        def worker():
-            try:
-                self.process = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    encoding='utf-8',
-                    errors='replace',
-                    cwd=str(PROJECT_ROOT),
-                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0,
-                )
-                for line in iter(self.process.stdout.readline, ''):
-                    self.log_q.put(line)
-                self.process.wait()
-                rc = self.process.returncode
-                self.log_q.put(f'[{now()}] Proceso terminado (código {rc})\n')
-                self.log_q.put('__DONE__')
-            except Exception as exc:
-                self.log_q.put(f'[ERROR] {exc}\n')
-                self.log_q.put('__DONE__')
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def stop_bot(self):
-        if self.process and self.running:
+    def do_stop(self):
+        if self.process:
             try:
                 self.process.terminate()
-                self.log_append(f'[{now()}] Ejecución cancelada por el usuario.\n', 'WARN')
+                self._log(f'[{ts()}] Detenido por el usuario.\n', 'WARN')
             except Exception:
                 pass
 
-    def run_doctor(self):
+    def do_doctor(self):
         cmd = [UV, 'run', '--project', str(PROJECT_ROOT), 'mtc-bot', 'doctor']
-        self._set_running(True)
-        self.log_append(f'\n[{now()}] Ejecutando doctor...\n', 'DIM')
-
-        def worker():
-            try:
-                result = subprocess.run(
-                    cmd, capture_output=True, text=True,
-                    encoding='utf-8', errors='replace', cwd=str(PROJECT_ROOT),
-                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0,
-                )
-                out = (result.stdout or '') + (result.stderr or '')
-                for line in out.splitlines(keepends=True):
-                    self.log_q.put(line)
-                self.log_q.put('__DONE__')
-            except Exception as exc:
-                self.log_q.put(f'[ERROR] {exc}\n')
-                self.log_q.put('__DONE__')
-
-        threading.Thread(target=worker, daemon=True).start()
+        self._set_busy(True)
+        self._log(f'\n[{ts()}] Ejecutando doctor...\n', 'DIM')
+        self._spawn(cmd)
 
     def open_dashboard(self):
         webbrowser.open('https://canazachyub.github.io/mtc-casilla-bot/')
 
-    def open_logs_dir(self):
+    def open_logs(self):
         LOGS_DIR.mkdir(exist_ok=True)
         os.startfile(str(LOGS_DIR))
 
-    def clear_log(self):
-        self.log_text.configure(state='normal')
-        self.log_text.delete('1.0', 'end')
-        self.log_text.configure(state='disabled')
+    def open_shots(self):
+        shots = PROJECT_ROOT / 'playwright-screenshots'
+        shots.mkdir(exist_ok=True)
+        os.startfile(str(shots))
 
-    # ── Helpers ──────────────────────────────────────────────────
-    def _set_running(self, on: bool):
-        self.running = on
-        if on:
-            self.btn_run.configure(state='disabled', bg=BORDER)
-            self.btn_stop.configure(state='normal')
-            self.lbl_status.configure(text='● Ejecutando...', fg=WARN)
-            self.progress.start(12)
-        else:
-            self.btn_run.configure(state='normal', bg=PRIMARY)
-            self.btn_stop.configure(state='disabled')
-            self.lbl_status.configure(text='● Inactivo', fg=MUTED)
-            self.progress.stop()
-            self._update_last_run()
+    # ── Subprocess ───────────────────────────────────────────────
+    def _spawn(self, cmd):
+        def worker():
+            try:
+                flags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                self.process = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, encoding='utf-8', errors='replace',
+                    cwd=str(PROJECT_ROOT), creationflags=flags)
+                for line in iter(self.process.stdout.readline, ''):
+                    self.q.put(line)
+                self.process.wait()
+                self.q.put(f'[{ts()}] Proceso finalizado (código {self.process.returncode})\n')
+            except Exception as exc:
+                self.q.put(f'[{ts()}] ERROR: {exc}\n')
+            finally:
+                self.q.put('__DONE__')
 
-    def _update_last_run(self):
-        LOGS_DIR.mkdir(exist_ok=True)
-        logs = sorted(LOGS_DIR.glob('run-*.log'), reverse=True)
-        if logs:
-            ts = logs[0].stem.replace('run-', '')
-            self.lbl_last.configure(text=f'Última ejecución: {ts}')
+        threading.Thread(target=worker, daemon=True).start()
 
-    def log_append(self, text: str, tag: str = 'INFO'):
-        self.log_text.configure(state='normal')
-        self.log_text.insert('end', text, tag)
-        self.log_text.see('end')
-        self.log_text.configure(state='disabled')
+    # ── Poll queue ────────────────────────────────────────────────
+    def _poll(self):
+        try:
+            while True:
+                line = self.q.get_nowait()
+                if line == '__DONE__':
+                    self._set_busy(False)
+                    break
+                tag = self._tag(line)
+                m = re.search(r'\b(\d{11})\b', line)
+                if m:
+                    self.lbl_ruc.configure(text=f'RUC en curso: {m.group(1)}')
+                self._log(line, tag)
+        except queue.Empty:
+            pass
+        self.root.after(80, self._poll)
 
-    def _classify_line(self, line: str) -> str:
+    def _tag(self, line: str) -> str:
         l = line.lower()
         if any(x in l for x in ['error', 'failed', 'exception', '✗', 'traceback']):
             return 'ERROR'
-        if any(x in l for x in ['warning', 'warn', '⚠']):
+        if any(x in l for x in ['warning', 'warn', '⚠', 'timeout']):
             return 'WARN'
-        if any(x in l for x in ['✓', '✅', 'ok', 'success', 'completado', 'subido', 'procesada']):
+        if any(x in l for x in ['✓', '✅', 'ok', 'success', 'completado', 'subido', 'skip']):
             return 'OK'
-        if any(x in l for x in ['ruc', 'citv', '206', '205', '209', 'scraping', 'login']):
+        if any(x in l for x in ['ruc', 'citv', 'login', 'inbox', 'scraping']):
             return 'RUC'
-        return 'INFO'
+        return None
 
-    def _poll_log_queue(self):
-        try:
-            while True:
-                line = self.log_q.get_nowait()
-                if line == '__DONE__':
-                    self._set_running(False)
-                    break
-                tag = self._classify_line(line)
-                # Extraer y mostrar RUC en curso
-                if 'ruc' in line.lower() and any(c.isdigit() for c in line):
-                    import re
-                    m = re.search(r'\d{11}', line)
-                    if m:
-                        self.lbl_ruc.configure(text=f'RUC: {m.group()}')
-                self.log_append(line, tag)
-        except Exception:
-            pass
-        self.root.after(100, self._poll_log_queue)
+    # ── UI helpers ────────────────────────────────────────────────
+    def _set_busy(self, on: bool):
+        self.running = on
+        state_run  = 'disabled' if on else 'normal'
+        state_stop = 'normal'   if on else 'disabled'
+        bg_run     = BORDER if on else PRIMARY
+        self.btn_run.configure(state=state_run, bg=bg_run)
+        self.btn_stop.configure(state=state_stop)
+        self.lbl_status.configure(
+            text='● Ejecutando...' if on else '● Inactivo',
+            fg=WARN if on else MUTED)
+        if on:
+            self.progress.start(10)
+        else:
+            self.progress.stop()
+            self.lbl_ruc.configure(text='')
+            self._refresh_last_run()
 
+    def _log(self, text: str, tag=None):
+        self.log.configure(state='normal')
+        if tag:
+            self.log.insert('end', text, tag)
+        else:
+            self.log.insert('end', text)
+        self.log.see('end')
+        self.log.configure(state='disabled')
 
-def now() -> str:
-    return datetime.now().strftime('%H:%M:%S')
+    def _clear_log(self):
+        self.log.configure(state='normal')
+        self.log.delete('1.0', 'end')
+        self.log.configure(state='disabled')
+
+    def _refresh_last_run(self):
+        LOGS_DIR.mkdir(exist_ok=True)
+        logs = sorted(LOGS_DIR.glob('run-*.log'), reverse=True)
+        label = logs[0].stem.replace('run-', '') if logs else '—'
+        self.lbl_last.configure(text=f'Última ejecución: {label}')
 
 
 def main():
     root = tk.Tk()
     style = ttk.Style(root)
     style.theme_use('clam')
-    style.configure('TProgressbar', troughcolor=SURFACE2, background=PRIMARY, thickness=6)
-    style.configure('TCombobox', fieldbackground=SURFACE2, background=SURFACE2,
-                    foreground=TEXT, selectbackground=SURFACE2)
-
-    app = BotLauncher(root)
+    style.configure('TProgressbar', troughcolor=SURF2, background=PRIMARY, thickness=5)
+    style.configure('TCombobox', fieldbackground=SURF2, background=SURF2,
+                    foreground=TEXT, selectbackground=SURF2)
+    App(root)
     root.protocol('WM_DELETE_WINDOW', root.destroy)
     root.mainloop()
 
