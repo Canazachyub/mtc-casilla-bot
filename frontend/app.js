@@ -435,7 +435,7 @@ async function handleGenerateResponse(notifId, templateId, justificacion) {
 
   try {
     const result  = await api('generate_response', {
-      id: notifId,
+      notification_id: notifId,
       template_id: templateId,
       justificacion,
     });
