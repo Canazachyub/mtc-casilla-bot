@@ -9,21 +9,22 @@
 <body>
 
 <header>
-  <h1>📬 MTC Casilla Bot</h1>
+  <div class="header-left">
+    <h1>📬 MTC Casilla Bot</h1>
+    <span class="header-subtitle">Sistema de Notificaciones SUTRAN</span>
+  </div>
   <div class="header-actions">
-    <button id="btn-refresh" class="hidden" title="Recargar">🔄</button>
     <span id="last-update" class="muted"></span>
+    <button id="btn-refresh" class="btn-icon hidden" title="Recargar datos">↺ Actualizar</button>
   </div>
 </header>
 
 <!-- Onboarding: solo visible cuando no hay API_URL configurada -->
 <section id="onboarding" class="onboarding hidden" aria-labelledby="onboarding-title">
   <div class="onboarding-card">
-    <h2 id="onboarding-title">🔌 Conectá el dashboard a tu Apps Script</h2>
-    <p class="muted">
-      Pegá la URL del Web App deployado desde Apps Script para empezar a ver
-      las notificaciones procesadas.
-    </p>
+    <div class="onboarding-icon">🔌</div>
+    <h2 id="onboarding-title">Conectá el dashboard a tu Apps Script</h2>
+    <p class="muted">Pegá la URL del Web App deployado desde Apps Script para empezar a ver las notificaciones procesadas.</p>
     <form id="api-url-form" class="onboarding-form" novalidate>
       <label for="api-url-input" class="sr-only">URL del Apps Script</label>
       <input
@@ -35,23 +36,33 @@
         spellcheck="false"
         required
       >
-      <button type="submit" id="btn-save-url">Guardar y conectar</button>
+      <button type="submit" id="btn-save-url">Conectar</button>
     </form>
     <p id="onboarding-error" class="onboarding-error hidden" role="alert"></p>
-    <p class="muted small">
-      🔒 La URL queda guardada solo en este navegador (localStorage).
-    </p>
+    <p class="muted small">🔒 La URL queda guardada solo en este navegador (localStorage).</p>
   </div>
 </section>
 
-<!-- Dashboard: solo visible cuando hay API_URL configurada -->
+<!-- Dashboard: visible cuando hay API_URL configurada -->
 <div id="dashboard" class="hidden">
 
   <section class="metrics" id="metrics">
-    <div class="metric"><span class="value" id="m-total">—</span><span class="label">Total</span></div>
-    <div class="metric pendiente"><span class="value" id="m-pendientes">—</span><span class="label">Pendientes</span></div>
-    <div class="metric vencido"><span class="value" id="m-vencidos">—</span><span class="label">Vencidos</span></div>
-    <div class="metric hoy"><span class="value" id="m-hoy">—</span><span class="label">Hoy</span></div>
+    <div class="metric">
+      <span class="value" id="m-total">—</span>
+      <span class="label">Total</span>
+    </div>
+    <div class="metric pendiente">
+      <span class="value" id="m-pendientes">—</span>
+      <span class="label">Pendientes</span>
+    </div>
+    <div class="metric vencido">
+      <span class="value" id="m-vencidos">—</span>
+      <span class="label">Vencidos</span>
+    </div>
+    <div class="metric hoy">
+      <span class="value" id="m-hoy">—</span>
+      <span class="label">Hoy</span>
+    </div>
   </section>
 
   <section class="filters">
@@ -60,17 +71,18 @@
     <select id="filter-estado">
       <option value="">Todos los estados</option>
       <option value="pendiente">Pendiente</option>
+      <option value="en-proceso">En proceso</option>
       <option value="completado">Completado</option>
       <option value="informativo">Informativo</option>
+      <option value="archivada">Archivada</option>
     </select>
     <label class="check"><input type="checkbox" id="filter-pendientes"> Solo pendientes</label>
     <input type="date" id="filter-since" title="Desde">
   </section>
 
   <main>
-    <div id="loading" class="loading hidden">⏳ Cargando...</div>
+    <div id="loading" class="loading hidden">⏳ Cargando notificaciones...</div>
 
-    <!-- Card de error con URL en uso + botón cambiar URL -->
     <div id="error-card" class="error-card hidden" role="alert">
       <div class="error-card-header">
         <strong>⚠️ No se pudo conectar con la API</strong>
@@ -106,30 +118,47 @@
     </div>
     <div id="empty-api" class="empty hidden">
       <p>✅ Conectado a la API · Aún no hay notificaciones procesadas.</p>
-      <p class="muted small">
-        Cuando el bot Python procese su primera notificación, aparecerá acá.
-      </p>
+      <p class="muted small">Cuando el bot Python procese su primera notificación, aparecerá acá.</p>
     </div>
   </main>
 
-  <!-- Modal detalle -->
-  <div id="modal" class="modal hidden">
+  <!-- Modal detalle + respuesta -->
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <div class="modal-content">
-      <button class="modal-close" id="modal-close">✕</button>
-      <div id="modal-body"></div>
+      <button class="modal-close" id="modal-close" aria-label="Cerrar">✕</button>
+
+      <div class="modal-tabs" role="tablist">
+        <button class="modal-tab active" data-tab="detalle" role="tab" aria-selected="true">
+          📄 Detalle
+        </button>
+        <button class="modal-tab" data-tab="respuesta" role="tab" aria-selected="false">
+          ✍️ Generar Respuesta
+        </button>
+      </div>
+
+      <div id="tab-detalle" class="tab-panel">
+        <div id="modal-body"></div>
+      </div>
+
+      <div id="tab-respuesta" class="tab-panel hidden">
+        <div id="response-panel"></div>
+      </div>
     </div>
   </div>
 </div>
 
 <footer>
-  <span class="muted">
-    MTC Casilla Bot · Dashboard local · <span id="api-status"></span>
-  </span>
-  <button id="btn-change-url" class="btn-link hidden" title="Limpiar URL guardada y reconfigurar">
+  <span class="muted">MTC Casilla Bot · <span id="api-status"></span></span>
+  <button id="btn-change-url" class="btn-link hidden" title="Cambiar URL del API">
     🔧 Cambiar URL del API
   </button>
 </footer>
 
+<!-- Toast notifications -->
+<div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="false"></div>
+
+<script src="https://unpkg.com/docx@7.8.2/build/index.js"></script>
+<script src="https://unpkg.com/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
