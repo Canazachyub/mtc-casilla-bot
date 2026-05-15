@@ -348,7 +348,7 @@ function renderResponsePanel(notifId, detail) {
   }
 
   const tplOptions = state.templates
-    .map(t => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.nombre)} — ${escapeHtml(t.tipo_documento || '')}</option>`)
+    .map(t => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.nombre)}${t.tipo_notificacion ? ' — ' + escapeHtml(t.tipo_notificacion) : ''}</option>`)
     .join('');
 
   return `

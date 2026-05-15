@@ -238,10 +238,10 @@ function handleGenerateResponse_(params) {
   const template = handleGetTemplate_({ id: template_id });
   if (template.error) return { error: 'template_no_encontrado' };
 
-  const prompt = buildResponsePrompt_(detail, template.texto_plantilla || '', justificacion);
-  const texto = callDeepSeek_(apiKey, prompt);
+  const prompt   = buildResponsePrompt_(detail, template.texto_plantilla || '', justificacion);
+  const respuesta = callDeepSeek_(apiKey, prompt);
 
-  return { ok: true, texto };
+  return { ok: true, respuesta };
 }
 
 function buildResponsePrompt_(detail, templateText, justificacion) {
@@ -520,4 +520,28 @@ function _testTemplates() {
 function _testUpdateStatus() {
   // Reemplazá con un ID real antes de ejecutar
   Logger.log(JSON.stringify(handleUpdateStatus_({ id: 'TEST_ID', estado: 'en-proceso' })));
+}
+
+/**
+ * Ejecutar desde el editor para forzar autorización de UrlFetchApp.
+ * Google pedirá el permiso "script.external_request" la primera vez.
+ */
+function _testUrlFetch() {
+  const resp = UrlFetchApp.fetch('https://httpbin.org/get');
+  Logger.log('OK: ' + resp.getResponseCode());
+}
+
+/**
+ * Verificar que la API key de DeepSeek está configurada y funciona.
+ */
+function _testDeepSeekKey() {
+  const apiKey = PropertiesService.getScriptProperties().getProperty('DEEPSEEK_API_KEY');
+  if (!apiKey) { Logger.log('ERROR: DEEPSEEK_API_KEY no configurada'); return; }
+
+  const resp = UrlFetchApp.fetch('https://api.deepseek.com/models', {
+    headers: { 'Authorization': 'Bearer ' + apiKey },
+    muteHttpExceptions: true,
+  });
+  Logger.log('DeepSeek status: ' + resp.getResponseCode());
+  Logger.log(resp.getContentText().slice(0, 200));
 }
