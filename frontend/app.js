@@ -1,5 +1,5 @@
 /* ════════════════════════════════════════════════════════════════
-   MTC Casilla Bot — Frontend v2
+   MTC Casilla Bot — Frontend v3
    Consume la API REST de Apps Script (acción GET, params por URL).
    API_URL se guarda en localStorage (clave: mtc_bot_api_url).
    ════════════════════════════════════════════════════════════════ */
@@ -9,11 +9,25 @@ const API_URL_PREFIX = 'https://script.google.com/macros/';
 
 const ALLOWED_ESTADOS = ['pendiente', 'en-proceso', 'completado', 'informativo', 'archivada'];
 const ESTADO_LABELS   = {
-  pendiente:   'Pendiente',
+  pendiente:    'Pendiente',
   'en-proceso': 'En proceso',
-  completado:  'Completado',
-  informativo: 'Informativo',
-  archivada:   'Archivada',
+  completado:   'Completado',
+  informativo:  'Informativo',
+  archivada:    'Archivada',
+};
+
+const ALLOWED_PROGRESO = ['NO INICIADO', 'AGENDAR', 'EN REVISIÓN', 'PRESENTADO'];
+const PROGRESO_LABELS  = {
+  'NO INICIADO': 'No iniciado',
+  'AGENDAR':     'Agendar',
+  'EN REVISIÓN': 'En revisión',
+  'PRESENTADO':  'Presentado',
+};
+const PROGRESO_CSS = {
+  'NO INICIADO': 'no-iniciado',
+  'AGENDAR':     'agendar',
+  'EN REVISIÓN': 'en-revision',
+  'PRESENTADO':  'presentado',
 };
 
 const state = {
@@ -24,7 +38,7 @@ const state = {
   currentDetailId: null,
   currentDetail:   null,
   filters: {
-    search: '', ruc: '', estado: '',
+    search: '', sede: '', progreso: '',
     soloPendientes: false, since: '',
   },
 };
@@ -83,7 +97,7 @@ async function loadAll() {
     ]);
     renderMetrics(summary);
     state.items = list.items || [];
-    populateRucFilter(state.items);
+    populateSedeFilter(state.items);
     applyFilters();
 
     document.getElementById('last-update').textContent =
@@ -102,20 +116,17 @@ async function loadAll() {
 /* ──────────────────────────── Render metrics ──────────────────── */
 
 function renderMetrics(s) {
-  document.getElementById('m-total').textContent     = s.total      ?? 0;
-  document.getElementById('m-pendientes').textContent = s.pendientes ?? 0;
-  document.getElementById('m-vencidos').textContent   = s.vencidos   ?? 0;
-  document.getElementById('m-hoy').textContent        = s.hoy        ?? 0;
+  document.getElementById('m-total').textContent      = s.total      ?? 0;
+  document.getElementById('m-pendientes').textContent  = s.pendientes ?? 0;
+  document.getElementById('m-vencidos').textContent    = s.vencidos   ?? 0;
+  document.getElementById('m-hoy').textContent         = s.hoy        ?? 0;
 }
 
-function populateRucFilter(items) {
-  const sel  = document.getElementById('filter-ruc');
-  const rucs = [...new Set(items.map(i => i.ruc).filter(Boolean))].sort();
-  sel.innerHTML = '<option value="">Todos los RUCs</option>' +
-    rucs.map(r => {
-      const empresa = (items.find(i => i.ruc === r)?.empresa || '').slice(0, 30);
-      return `<option value="${r}">${r} — ${empresa}</option>`;
-    }).join('');
+function populateSedeFilter(items) {
+  const sel   = document.getElementById('filter-sede');
+  const sedes = [...new Set(items.map(i => i.sede).filter(Boolean))].sort();
+  sel.innerHTML = '<option value="">Todas las sedes</option>' +
+    sedes.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
 }
 
 /* ──────────────────────────── Filtros ─────────────────────────── */
@@ -130,14 +141,15 @@ function applyFilters() {
       (i.documento || '').toLowerCase().includes(q) ||
       (i.empresa   || '').toLowerCase().includes(q) ||
       (i.asunto    || '').toLowerCase().includes(q) ||
-      (i.resumen   || '').toLowerCase().includes(q)
+      (i.resumen   || '').toLowerCase().includes(q) ||
+      (i.tarea     || '').toLowerCase().includes(q)
     );
   }
-  if (f.ruc)   data = data.filter(i => String(i.ruc) === f.ruc);
-  if (f.estado) data = data.filter(i => i.estado === f.estado);
+  if (f.sede)    data = data.filter(i => i.sede === f.sede);
+  if (f.progreso) data = data.filter(i => i.progreso === f.progreso);
   if (f.soloPendientes) {
     data = data.filter(i =>
-      String(i.requiere_respuesta).toUpperCase() === 'TRUE' && i.estado === 'pendiente'
+      i.progreso === 'NO INICIADO' || i.progreso === 'AGENDAR'
     );
   }
   if (f.since) {
@@ -152,28 +164,42 @@ function applyFilters() {
 /* ──────────────────────────── Tabla ───────────────────────────── */
 
 function rowUrgencyClass(item) {
-  if (['completado', 'archivada', 'informativo'].includes(item.estado)) return '';
+  if (item.progreso === 'PRESENTADO') return '';
+  if (item.plazo_vencido) return 'row-vencido';
   const d = parseInt(item.dias_restantes, 10);
   if (isNaN(d)) return '';
-  if (d < 0)  return 'row-vencido';
-  if (d <= 1) return 'row-urgente';
-  if (d <= 3) return 'row-alerta';
+  if (d < 0)   return 'row-vencido';
+  if (d <= 1)  return 'row-urgente';
+  if (d <= 3)  return 'row-alerta';
   return '';
 }
 
-function statusSelect(item) {
-  const estado  = item.estado || 'pendiente';
-  const options = ALLOWED_ESTADOS.map(s =>
-    `<option value="${s}"${estado === s ? ' selected' : ''}>${ESTADO_LABELS[s]}</option>`
+function progresoSelect(item) {
+  const p   = item.progreso || 'NO INICIADO';
+  const cls = PROGRESO_CSS[p] || 'no-iniciado';
+  const options = ALLOWED_PROGRESO.map(v =>
+    `<option value="${v}"${p === v ? ' selected' : ''}>${PROGRESO_LABELS[v]}</option>`
   ).join('');
-  return `<select class="select-estado estado-${estado}" data-id="${escapeHtml(item.id)}" data-prev="${escapeHtml(estado)}">${options}</select>`;
+  return `<select class="select-progreso progreso-${cls}" data-id="${escapeHtml(item.id)}" data-prev="${escapeHtml(p)}">${options}</select>`;
+}
+
+function tareasBadges(tareaStr) {
+  if (!tareaStr) return '<span class="muted">—</span>';
+  const tareas = tareaStr.split(',').map(t => t.trim()).filter(Boolean);
+  if (tareas.length === 0) return '<span class="muted">—</span>';
+  const max   = 2;
+  const shown = tareas.slice(0, max).map(t => `<span class="tag-tarea">${escapeHtml(t)}</span>`).join('');
+  const extra = tareas.length > max
+    ? ` <span class="tag-more">+${tareas.length - max}</span>`
+    : '';
+  return shown + extra;
 }
 
 function renderTable(items) {
-  const tbody        = document.getElementById('notif-tbody');
-  const table        = document.getElementById('notif-table');
+  const tbody         = document.getElementById('notif-tbody');
+  const table         = document.getElementById('notif-table');
   const emptyFiltered = document.getElementById('empty-filtered');
-  const emptyApi     = document.getElementById('empty-api');
+  const emptyApi      = document.getElementById('empty-api');
 
   if (state.items.length === 0) {
     table.classList.add('hidden');
@@ -195,19 +221,24 @@ function renderTable(items) {
 
   tbody.innerHTML = items.map(i => `
     <tr class="${rowUrgencyClass(i)}" data-id="${escapeHtml(i.id)}">
-      <td>${statusSelect(i)}</td>
-      <td>${formatDate(i.fecha_notificacion)}</td>
+      <td>${progresoSelect(i)}</td>
+      <td>
+        <div>${formatDate(i.fecha_notificacion)}</div>
+        ${i.plazo_vencido ? '<span class="badge vencido small">Venció</span>' : ''}
+      </td>
       <td>
         <strong>${escapeHtml(i.documento || '—')}</strong>
-        <div class="muted small">${escapeHtml((i.asunto || '').slice(0, 80))}</div>
+        <div class="muted small">${escapeHtml((i.asunto || '').slice(0, 90))}</div>
       </td>
       <td>
         <div>${escapeHtml((i.empresa || '').slice(0, 35))}</div>
-        <div class="muted small">${i.ruc || ''}</div>
+        ${i.sede ? `<div class="muted small">📍 ${escapeHtml(i.sede)}</div>` : ''}
       </td>
-      <td>${escapeHtml(i.emisor || '—')}</td>
-      <td>${i.plazo_vencimiento ? formatDate(i.plazo_vencimiento) : '—'}</td>
-      <td>${badgeDias(i.dias_restantes)}</td>
+      <td class="col-tarea">${tareasBadges(i.tarea)}</td>
+      <td>
+        <div>${i.plazo_vencimiento ? formatDate(i.plazo_vencimiento) : '—'}</div>
+        <div>${badgeDias(i.dias_restantes)}</div>
+      </td>
       <td><button class="btn-detail" data-id="${escapeHtml(i.id)}">Ver →</button></td>
     </tr>
   `).join('');
@@ -217,44 +248,60 @@ function renderTable(items) {
   );
 }
 
-/* ──────────────────────────── Estado change ───────────────────── */
+/* ──────────────────────────── Progreso change ─────────────────── */
 
-async function handleStatusChange(id, estado) {
-  const select = document.querySelector(`select.select-estado[data-id="${id}"]`);
-  const prev   = select ? select.dataset.prev : estado;
+async function handleProgresoChange(id, progreso) {
+  const select = document.querySelector(`select.select-progreso[data-id="${id}"]`);
+  const prev   = select ? select.dataset.prev : progreso;
 
   try {
-    await api('update_status', { id, estado });
+    await api('update_status', { id, campo: 'progreso', valor: progreso });
     const item = state.items.find(i => i.id === id);
-    if (item) item.estado = estado;
+    if (item) item.progreso = progreso;
     if (select) {
-      select.className    = `select-estado estado-${estado}`;
-      select.dataset.prev = estado;
+      const cls = PROGRESO_CSS[progreso] || 'no-iniciado';
+      select.className    = `select-progreso progreso-${cls}`;
+      select.dataset.prev = progreso;
       const tr = select.closest('tr');
-      if (tr) {
-        tr.className = rowUrgencyClass(item || { estado, dias_restantes: null });
-      }
+      if (tr) tr.className = rowUrgencyClass(item || { progreso, plazo_vencido: false });
     }
-    showToast(`Estado actualizado: ${ESTADO_LABELS[estado] || estado}`, 'ok');
+    showToast(`Progreso: ${PROGRESO_LABELS[progreso] || progreso}`, 'ok');
   } catch (err) {
     if (select) select.value = prev;
     showToast('Error al actualizar: ' + err.message, 'error');
   }
 }
 
-/* ──────────────────────────── Badges ──────────────────────────── */
+/* ──────────────────────────── Notas save ──────────────────────── */
 
-function badgeEstado(item) {
-  const estado = item.estado || '—';
-  const cls    = ALLOWED_ESTADOS.includes(estado) ? `badge ${estado}` : 'badge';
-  return `<span class="${cls}">${ESTADO_LABELS[estado] || estado}</span>`;
+async function saveNotas(id, notas) {
+  const btn    = document.getElementById('btn-save-notas');
+  const status = document.getElementById('notas-status');
+  if (btn) btn.disabled = true;
+  if (status) status.textContent = 'Guardando...';
+
+  try {
+    await api('update_status', { id, campo: 'notas', valor: notas });
+    const item = state.items.find(i => i.id === id);
+    if (item) item.notas = notas;
+    if (status) status.textContent = '✓ Guardado';
+    showToast('Notas guardadas', 'ok');
+    setTimeout(() => { if (status) status.textContent = ''; }, 2500);
+  } catch (err) {
+    if (status) status.textContent = '⚠ Error al guardar';
+    showToast('Error al guardar notas: ' + err.message, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
+
+/* ──────────────────────────── Badges ──────────────────────────── */
 
 function badgeDias(dias) {
   if (dias === undefined || dias === null || dias === '') return '<span class="muted">—</span>';
   const d   = parseInt(dias, 10);
   let cls   = 'badge';
-  if (d < 0)      cls = 'badge vencido';
+  if (d < 0)       cls = 'badge vencido';
   else if (d <= 1) cls = 'badge urgente';
   else if (d <= 3) cls = 'badge alerta';
   else             cls = 'badge ok';
@@ -283,7 +330,7 @@ async function openDetail(id) {
   const body   = document.getElementById('modal-body');
   const rPanel = document.getElementById('response-panel');
 
-  body.innerHTML  = '<p class="loading">⏳ Cargando detalle...</p>';
+  body.innerHTML   = '<p class="loading">⏳ Cargando detalle...</p>';
   rPanel.innerHTML = '';
   modal.classList.remove('hidden');
   switchTab('detalle');
@@ -291,8 +338,9 @@ async function openDetail(id) {
   try {
     const detail = await api('detail', { id });
     state.currentDetail = detail;
-    body.innerHTML  = renderDetailTab(detail);
+    body.innerHTML   = renderDetailTab(detail);
     rPanel.innerHTML = renderResponsePanel(id, detail);
+    bindDetailTabEvents(id, detail);
     bindResponsePanelEvents(id, detail);
   } catch (err) {
     body.innerHTML = `<p class="error">Error: ${escapeHtml(err.message)}</p>`;
@@ -302,32 +350,84 @@ async function openDetail(id) {
 /* ──────────────────────────── Detalle tab ─────────────────────── */
 
 function renderDetailTab(d) {
+  const tareas = (d.tarea || '').split(',').map(t => t.trim()).filter(Boolean);
+  const tareasHtml = tareas.length
+    ? tareas.map(t => `<span class="tag-tarea">${escapeHtml(t)}</span>`).join(' ')
+    : '<span class="muted">—</span>';
+
+  const progreso = d.progreso || 'NO INICIADO';
+  const progresoOptions = ALLOWED_PROGRESO.map(p =>
+    `<option value="${p}"${progreso === p ? ' selected' : ''}>${PROGRESO_LABELS[p]}</option>`
+  ).join('');
+  const progresoClsDetail = PROGRESO_CSS[progreso] || 'no-iniciado';
+
   return `
     <h2 style="margin:0 0 0.3rem">${escapeHtml(d.documento || 'Sin nombre')}</h2>
     <p class="muted">${escapeHtml(d.asunto || '')}</p>
 
     <div class="detail-grid">
       <div><strong>Fecha notificación:</strong> ${formatDate(d.fecha_notificacion)}</div>
-      <div><strong>RUC:</strong> ${escapeHtml(d.ruc || '—')}</div>
+      <div><strong>Lectura:</strong> ${d.lectura_notificacion ? formatDate(d.lectura_notificacion) : '—'}</div>
       <div><strong>Empresa:</strong> ${escapeHtml(d.empresa || '—')}</div>
+      <div><strong>RUC:</strong> ${escapeHtml(d.ruc || '—')}</div>
+      <div><strong>Sede:</strong> ${d.sede ? `📍 ${escapeHtml(d.sede)}` : '—'}</div>
       <div><strong>Emisor:</strong> ${escapeHtml(d.emisor || '—')}</div>
+      <div><strong>Casilla origen:</strong> ${escapeHtml(d.casilla_origen || '—')}</div>
+      <div><strong>Referencia:</strong> ${escapeHtml(d.referencia || '—')}</div>
       <div><strong>Plazo:</strong> ${escapeHtml(String(d.plazo_dias_habiles || '—'))} días hábiles</div>
       <div><strong>Vence:</strong> ${formatDate(d.plazo_vencimiento)} ${badgeDias(d.dias_restantes)}</div>
-      <div><strong>Estado:</strong> ${badgeEstado(d)}</div>
       <div><strong>Confianza IA:</strong> ${escapeHtml(d.confianza_ia || '—')} (${escapeHtml(d.modelo_ia || '—')})</div>
+      <div>
+        <strong>Progreso:</strong>
+        <select id="detail-progreso-select"
+          class="select-progreso progreso-${progresoClsDetail}"
+          data-id="${escapeHtml(d.id)}"
+          data-prev="${escapeHtml(progreso)}"
+          style="margin-top:0.3rem">
+          ${progresoOptions}
+        </select>
+      </div>
     </div>
+
+    <h3>🗂 Tareas</h3>
+    <div style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-bottom:0.5rem">${tareasHtml}</div>
 
     <h3>📋 Resumen</h3>
     <p style="line-height:1.7">${escapeHtml(d.resumen || 'Sin resumen.')}</p>
-
-    ${d.notas ? `<h3>📝 Notas</h3><p>${escapeHtml(d.notas)}</p>` : ''}
 
     ${d.drive_view_url ? `
       <h3>📎 PDF unificado</h3>
       <iframe class="pdf-frame" src="${embedDriveUrl(d.drive_view_url)}" allow="autoplay"></iframe>
       <p style="margin-top:0.5rem"><a href="${d.drive_view_url}" target="_blank" rel="noopener">Abrir en Drive ↗</a></p>
     ` : ''}
+
+    <h3>📝 Notas internas</h3>
+    <div class="notas-editor">
+      <textarea id="notas-edit" rows="4"
+        placeholder="Agregar notas sobre esta notificación...">${escapeHtml(d.notas || '')}</textarea>
+      <div class="notas-actions">
+        <button id="btn-save-notas">💾 Guardar notas</button>
+        <span id="notas-status" class="muted small"></span>
+      </div>
+    </div>
   `;
+}
+
+function bindDetailTabEvents(id, detail) {
+  const progresoSel = document.getElementById('detail-progreso-select');
+  if (progresoSel) {
+    progresoSel.addEventListener('change', e => {
+      handleProgresoChange(id, e.target.value);
+    });
+  }
+
+  const btnSaveNotas = document.getElementById('btn-save-notas');
+  if (btnSaveNotas) {
+    btnSaveNotas.addEventListener('click', () => {
+      const notas = document.getElementById('notas-edit').value;
+      saveNotas(id, notas);
+    });
+  }
 }
 
 function embedDriveUrl(url) {
@@ -415,10 +515,8 @@ function bindResponsePanelEvents(notifId, detail) {
   const btnRegen = document.getElementById('btn-regenerate');
   if (btnRegen) {
     btnRegen.addEventListener('click', () => {
-      const output  = document.getElementById('response-output');
-      const genBtn  = document.getElementById('btn-generate');
-      output.classList.add('hidden');
-      genBtn.classList.remove('hidden');
+      document.getElementById('response-output').classList.add('hidden');
+      document.getElementById('btn-generate').classList.remove('hidden');
     });
   }
 }
@@ -439,8 +537,7 @@ async function handleGenerateResponse(notifId, templateId, justificacion) {
       template_id: templateId,
       justificacion,
     });
-    const preview = document.getElementById('resp-preview');
-    preview.innerText = result.respuesta || '(Sin respuesta generada)';
+    document.getElementById('resp-preview').innerText = result.respuesta || '(Sin respuesta generada)';
     output.classList.remove('hidden');
     showToast('Respuesta generada correctamente', 'ok');
   } catch (err) {
@@ -460,7 +557,7 @@ async function downloadWord(text, filename, detail) {
     return;
   }
 
-  const { Document, Packer, Paragraph, TextRun, HeadingLevel } = window.docx;
+  const { Document, Packer, Paragraph, TextRun } = window.docx;
 
   const blocks = text.split(/\n\n+/);
   const paragraphs = blocks.map(block => {
@@ -565,7 +662,7 @@ function handleSaveUrl(e) {
   e.preventDefault();
   hideOnboardingError();
   const url = (document.getElementById('api-url-input').value || '').trim();
-  if (!url)              { showOnboardingError('Ingresá la URL del Web App.'); return; }
+  if (!url)               { showOnboardingError('Ingresá la URL del Web App.'); return; }
   if (!isValidApiUrl(url)) {
     showOnboardingError('La URL debe empezar con https://script.google.com/macros/');
     return;
@@ -589,11 +686,11 @@ function bindDashboardListeners() {
   document.getElementById('filter-search').addEventListener('input', e => {
     state.filters.search = e.target.value; applyFilters();
   });
-  document.getElementById('filter-ruc').addEventListener('change', e => {
-    state.filters.ruc = e.target.value; applyFilters();
+  document.getElementById('filter-sede').addEventListener('change', e => {
+    state.filters.sede = e.target.value; applyFilters();
   });
-  document.getElementById('filter-estado').addEventListener('change', e => {
-    state.filters.estado = e.target.value; applyFilters();
+  document.getElementById('filter-progreso').addEventListener('change', e => {
+    state.filters.progreso = e.target.value; applyFilters();
   });
   document.getElementById('filter-pendientes').addEventListener('change', e => {
     state.filters.soloPendientes = e.target.checked; applyFilters();
@@ -602,10 +699,10 @@ function bindDashboardListeners() {
     state.filters.since = e.target.value; applyFilters();
   });
 
-  /* Status select — event delegation on tbody */
+  /* Progreso select — event delegation on tbody */
   document.getElementById('notif-tbody').addEventListener('change', e => {
-    if (e.target.classList.contains('select-estado')) {
-      handleStatusChange(e.target.dataset.id, e.target.value);
+    if (e.target.classList.contains('select-progreso')) {
+      handleProgresoChange(e.target.dataset.id, e.target.value);
     }
   });
 
@@ -642,7 +739,6 @@ function boot() {
   loadAll();
   loadTemplates();
 
-  /* Auto-refresh cada 5 min */
   setInterval(loadAll, 5 * 60 * 1000);
 }
 

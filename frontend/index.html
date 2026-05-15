@@ -11,7 +11,7 @@
 <header>
   <div class="header-left">
     <h1>📬 MTC Casilla Bot</h1>
-    <span class="header-subtitle">Sistema de Notificaciones SUTRAN</span>
+    <span class="header-subtitle">Sistema de Notificaciones SUTRAN / MTC</span>
   </div>
   <div class="header-actions">
     <span id="last-update" class="muted"></span>
@@ -19,7 +19,7 @@
   </div>
 </header>
 
-<!-- Onboarding: solo visible cuando no hay API_URL configurada -->
+<!-- Onboarding -->
 <section id="onboarding" class="onboarding hidden" aria-labelledby="onboarding-title">
   <div class="onboarding-card">
     <div class="onboarding-icon">🔌</div>
@@ -43,7 +43,7 @@
   </div>
 </section>
 
-<!-- Dashboard: visible cuando hay API_URL configurada -->
+<!-- Dashboard -->
 <div id="dashboard" class="hidden">
 
   <section class="metrics" id="metrics">
@@ -66,15 +66,14 @@
   </section>
 
   <section class="filters">
-    <input type="search" id="filter-search" placeholder="🔎 Buscar (documento, empresa, asunto)...">
-    <select id="filter-ruc"><option value="">Todos los RUCs</option></select>
-    <select id="filter-estado">
-      <option value="">Todos los estados</option>
-      <option value="pendiente">Pendiente</option>
-      <option value="en-proceso">En proceso</option>
-      <option value="completado">Completado</option>
-      <option value="informativo">Informativo</option>
-      <option value="archivada">Archivada</option>
+    <input type="search" id="filter-search" placeholder="🔎 Buscar (documento, empresa, asunto, tarea)...">
+    <select id="filter-sede"><option value="">Todas las sedes</option></select>
+    <select id="filter-progreso">
+      <option value="">Todos los progresos</option>
+      <option value="NO INICIADO">No iniciado</option>
+      <option value="AGENDAR">Agendar</option>
+      <option value="EN REVISIÓN">En revisión</option>
+      <option value="PRESENTADO">Presentado</option>
     </select>
     <label class="check"><input type="checkbox" id="filter-pendientes"> Solo pendientes</label>
     <input type="date" id="filter-since" title="Desde">
@@ -100,13 +99,12 @@
     <table id="notif-table" class="hidden">
       <thead>
         <tr>
-          <th>Estado</th>
+          <th>Progreso</th>
           <th>Fecha</th>
           <th>Documento</th>
-          <th>Empresa (RUC)</th>
-          <th>Emisor</th>
+          <th>Empresa / Sede</th>
+          <th>Tarea</th>
           <th>Plazo</th>
-          <th>Días</th>
           <th></th>
         </tr>
       </thead>
@@ -154,7 +152,6 @@
   </button>
 </footer>
 
-<!-- Toast notifications -->
 <div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="false"></div>
 
 <script src="https://unpkg.com/docx@7.8.2/build/index.js"></script>

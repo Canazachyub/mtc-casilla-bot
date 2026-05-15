@@ -19,7 +19,8 @@ const CONFIG = Object.freeze({
   TAB_LOGS: 'logs',
   TAB_PLANTILLAS: 'plantillas',
   CACHE_TTL_SECONDS: 60,
-  ALLOWED_ESTADOS: ['pendiente', 'en-proceso', 'completado', 'informativo', 'archivada'],
+  ALLOWED_ESTADOS:  ['pendiente', 'en-proceso', 'completado', 'informativo', 'archivada'],
+  ALLOWED_PROGRESO: ['NO INICIADO', 'AGENDAR', 'EN REVISIÓN', 'PRESENTADO'],
 });
 
 /* ────────── Entry point ────────── */
@@ -62,8 +63,11 @@ function handleList_(params) {
     const until = new Date(params.until);
     data = data.filter(r => r.fecha_notificacion && new Date(r.fecha_notificacion) <= until);
   }
-  if (params.ruc)    data = data.filter(r => String(r.ruc) === String(params.ruc));
-  if (params.estado) data = data.filter(r => r.estado === params.estado);
+  if (params.ruc)           data = data.filter(r => String(r.ruc) === String(params.ruc));
+  if (params.estado)        data = data.filter(r => r.estado === params.estado);
+  if (params.sede)          data = data.filter(r => r.sede === params.sede);
+  if (params.progreso)      data = data.filter(r => r.progreso === params.progreso);
+  if (params.casilla_origen) data = data.filter(r => r.casilla_origen === params.casilla_origen);
   if (params.requiere_respuesta === 'true') {
     data = data.filter(r =>
       r.requiere_respuesta === true ||
@@ -77,6 +81,12 @@ function handleList_(params) {
       const venc = stripTime_(new Date(r.plazo_vencimiento));
       r.dias_restantes = Math.round((venc - today) / 86400000);
     }
+    // plazo_vencido: venció y no está PRESENTADO
+    r.plazo_vencido = !!(
+      r.plazo_vencimiento &&
+      stripTime_(new Date(r.plazo_vencimiento)) < today &&
+      r.progreso !== 'PRESENTADO'
+    );
   });
 
   data.sort((a, b) =>
@@ -123,16 +133,17 @@ function handleSummary_() {
   return {
     total: data.length,
     pendientes: data.filter(r =>
-      String(r.requiere_respuesta).toUpperCase() === 'TRUE' &&
-      r.estado === 'pendiente'
+      r.progreso === 'NO INICIADO' || r.progreso === 'AGENDAR'
     ).length,
     vencidos: data.filter(r => {
-      if (!r.plazo_vencimiento || r.estado === 'completado' || r.estado === 'archivada') return false;
+      if (!r.plazo_vencimiento || r.progreso === 'PRESENTADO') return false;
       return new Date(r.plazo_vencimiento) < today;
     }).length,
     hoy: data.filter(r => String(r.fecha_notificacion).startsWith(todayStr)).length,
     por_ruc: groupBy_(data, 'ruc'),
     por_estado: groupBy_(data, 'estado'),
+    por_progreso: groupBy_(data, 'progreso'),
+    por_sede: groupBy_(data, 'sede'),
   };
 }
 
@@ -190,31 +201,56 @@ function handleGetTemplate_(params) {
 }
 
 function handleUpdateStatus_(params) {
-  const { id, estado } = params;
-  if (!id)     return { error: 'falta_id' };
-  if (!estado) return { error: 'falta_estado' };
-  if (!CONFIG.ALLOWED_ESTADOS.includes(estado))
+  const { id } = params;
+  if (!id) return { error: 'falta_id' };
+
+  // Soporte genérico: campo=X&valor=Y
+  // Compatibilidad hacia atrás: ?estado=X o ?progreso=X
+  let campo = params.campo;
+  let valor = params.valor !== undefined ? params.valor : null;
+
+  if (!campo) {
+    if (params.progreso !== undefined) { campo = 'progreso'; valor = params.progreso; }
+    else if (params.estado !== undefined) { campo = 'estado'; valor = params.estado; }
+  }
+  if (campo === 'progreso' && valor === null && params.progreso) valor = params.progreso;
+  if (campo === 'estado'   && valor === null && params.estado)   valor = params.estado;
+
+  if (!campo) return { error: 'falta_campo', hint: 'Enviar campo=progreso|estado|notas y valor=X' };
+  if (valor === null || valor === undefined) return { error: 'falta_valor' };
+
+  const CAMPOS_EDITABLES = ['estado', 'progreso', 'notas'];
+  if (!CAMPOS_EDITABLES.includes(campo))
+    return { error: 'campo_no_editable', allowed: CAMPOS_EDITABLES };
+
+  if (campo === 'progreso' && !CONFIG.ALLOWED_PROGRESO.includes(valor))
+    return { error: 'progreso_invalido', allowed: CONFIG.ALLOWED_PROGRESO };
+  if (campo === 'estado' && !CONFIG.ALLOWED_ESTADOS.includes(valor))
     return { error: 'estado_invalido', allowed: CONFIG.ALLOWED_ESTADOS };
 
   const sheet = getNotifSheet_();
   const rows = sheet.getDataRange().getValues();
   const headers = rows[0];
-  const idCol     = headers.indexOf('id');
-  const estadoCol = headers.indexOf('estado');
-  if (idCol < 0 || estadoCol < 0) return { error: 'columnas_no_encontradas' };
+  const idCol    = headers.indexOf('id');
+  const campoCol = headers.indexOf(campo);
+  if (idCol    < 0) return { error: 'columna_id_no_encontrada' };
+  if (campoCol < 0) return { error: 'columna_no_encontrada', campo };
 
   for (let i = 1; i < rows.length; i++) {
     if (String(rows[i][idCol]) === String(id)) {
-      sheet.getRange(i + 1, estadoCol + 1).setValue(estado);
+      sheet.getRange(i + 1, campoCol + 1).setValue(valor);
 
       const fechaCol = headers.indexOf('fecha_respuesta');
-      if (fechaCol >= 0 && (estado === 'completado' || estado === 'archivada')) {
-        sheet.getRange(i + 1, fechaCol + 1)
-          .setValue(Utilities.formatDate(new Date(), 'America/Lima', 'yyyy-MM-dd'));
+      if (fechaCol >= 0) {
+        const hoy = Utilities.formatDate(new Date(), 'America/Lima', 'yyyy-MM-dd');
+        if ((campo === 'estado' && (valor === 'completado' || valor === 'archivada')) ||
+            (campo === 'progreso' && valor === 'PRESENTADO')) {
+          sheet.getRange(i + 1, fechaCol + 1).setValue(hoy);
+        }
       }
 
       CacheService.getScriptCache().remove('summary');
-      return { ok: true, id, estado };
+      return { ok: true, id, [campo]: valor };
     }
   }
   return { error: 'not_found', id };
@@ -255,12 +291,16 @@ Tu tarea es completar una plantilla de carta oficial rellenando ÚNICAMENTE los 
 DATOS DE LA NOTIFICACIÓN:
 - Empresa: ${detail.empresa || ''}
 - RUC: ${detail.ruc || ''}
+- Sede: ${detail.sede || ''}
 - Tipo documento: ${detail.tipo_documento || detail.documento || ''}
 - Número documento: ${detail.numero_documento || ''}
+- Referencia: ${detail.referencia || ''}
 - Fecha notificación: ${detail.fecha_notificacion || ''}
 - Emisor: ${detail.emisor || 'SUTRAN'}
+- Casilla origen: ${detail.casilla_origen || 'MTC'}
 - Asunto: ${detail.asunto || ''}
 - Resumen: ${detail.resumen || ''}
+- Tareas requeridas: ${detail.tarea || ''}
 - Plazo vencimiento: ${detail.plazo_vencimiento || 'no especificado'}
 - Fecha de hoy: ${hoy}
 - Año actual: ${anio}
