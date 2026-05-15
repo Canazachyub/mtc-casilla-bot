@@ -92,9 +92,10 @@ class App:
                  font=('Segoe UI', 9)).grid(row=0, column=0, sticky='w')
 
         self.var_since = tk.StringVar(value='today')
-        ttk.Combobox(opt, textvariable=self.var_since, width=12,
-                     values=['today', 'yesterday', 'all'],
-                     state='readonly').grid(row=0, column=1, padx=(4, 20), sticky='w')
+        ttk.Combobox(opt, textvariable=self.var_since, width=14,
+                     values=['today', 'yesterday', 'all',
+                             '2026-05-13', '2026-05-14', '2026-05-15'],
+                     ).grid(row=0, column=1, padx=(4, 20), sticky='w')
 
         self.var_dry = tk.BooleanVar(value=False)
         tk.Checkbutton(opt, text='Dry-run (solo vista previa)',
@@ -233,6 +234,7 @@ class App:
                 if line == '__DONE__':
                     self._set_busy(False)
                     break
+                line = self._strip_ansi(line)
                 tag = self._tag(line)
                 m = re.search(r'\b(\d{11})\b', line)
                 if m:
@@ -241,6 +243,12 @@ class App:
         except queue.Empty:
             pass
         self.root.after(80, self._poll)
+
+    ANSI_RE = re.compile(r'\x1b\[[0-9;]*[mK]|\x1b\[[?][0-9;]*[hl]|\r')
+
+    @staticmethod
+    def _strip_ansi(text: str) -> str:
+        return App.ANSI_RE.sub('', text)
 
     def _tag(self, line: str) -> str:
         l = line.lower()
