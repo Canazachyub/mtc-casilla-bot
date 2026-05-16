@@ -60,15 +60,20 @@ header {
   flex-shrink: 0;
   background: #ffffff;
   border-radius: 8px;
-  padding: 4px 6px;
+  padding: 4px 8px;
   display: flex;
   align-items: center;
-  justify-content: center;
+  height: 44px;
+  max-width: 160px;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 .header-logo img {
   height: 36px;
   width: auto;
+  max-width: 144px;
   display: block;
+  object-fit: contain;
 }
 header h1 {
   font-size: 1.1rem;
@@ -956,6 +961,10 @@ footer {
 }
 @media (max-width: 600px) {
   header { flex-wrap: wrap; gap: 0.5rem; }
+  .header-logo { height: 34px; max-width: 120px; padding: 3px 6px; }
+  .header-logo img { height: 28px; }
+  header h1 { font-size: 0.95rem; }
+  .header-subtitle { display: none; }
   header, .view-nav, .filters { padding-left: 1rem; padding-right: 1rem; }
   main { padding: 1rem 1rem 2rem; }
   .metrics { grid-template-columns: repeat(2, 1fr); }
