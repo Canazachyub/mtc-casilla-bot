@@ -257,7 +257,7 @@ function handleUpdateStatus_(params) {
 }
 
 function handleGenerateResponse_(params) {
-  const { notification_id, template_id, justificacion } = params;
+  const { notification_id, template_id, justificacion, ciudad } = params;
   if (!notification_id) return { error: 'falta_notification_id' };
   if (!template_id)     return { error: 'falta_template_id' };
   if (!justificacion || !justificacion.trim()) return { error: 'falta_justificacion' };
@@ -271,18 +271,44 @@ function handleGenerateResponse_(params) {
   const detail = handleDetail_({ id: notification_id });
   if (detail.error) return { error: 'notificacion_no_encontrada' };
 
+  // Enrich with representante_legal from rucs tab (if available)
+  const repLegal = getRucRepresentante_(detail.ruc || '');
+  if (repLegal) detail.representante_legal = repLegal;
+
   const template = handleGetTemplate_({ id: template_id });
   if (template.error) return { error: 'template_no_encontrado' };
 
-  const prompt   = buildResponsePrompt_(detail, template.texto_plantilla || '', justificacion);
-  const respuesta = callDeepSeek_(apiKey, prompt);
+  const ciudadFinal = ciudad || detail.sede || 'Lima';
+  const prompt      = buildResponsePrompt_(detail, template.texto_plantilla || '', justificacion, ciudadFinal);
+  const respuesta   = callDeepSeek_(apiKey, prompt);
 
   return { ok: true, respuesta };
 }
 
-function buildResponsePrompt_(detail, templateText, justificacion) {
-  const hoy  = Utilities.formatDate(new Date(), 'America/Lima', 'dd/MM/yyyy');
-  const anio = new Date().getFullYear();
+function getRucRepresentante_(ruc) {
+  try {
+    const ss    = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    const sheet = ss.getSheetByName('rucs');
+    if (!sheet) return '';
+    const rows   = sheet.getDataRange().getValues();
+    if (rows.length < 2) return '';
+    const headers = rows[0];
+    const rucCol  = headers.indexOf('ruc');
+    const repCol  = headers.indexOf('representante_legal');
+    if (rucCol < 0 || repCol < 0) return '';
+    for (let i = 1; i < rows.length; i++) {
+      if (String(rows[i][rucCol]).trim() === String(ruc).trim()) {
+        return String(rows[i][repCol] || '').trim();
+      }
+    }
+    return '';
+  } catch (_) { return ''; }
+}
+
+function buildResponsePrompt_(detail, templateText, justificacion, ciudad) {
+  const hoy     = Utilities.formatDate(new Date(), 'America/Lima', 'dd/MM/yyyy');
+  const anio    = new Date().getFullYear();
+  const repLegal = detail.representante_legal || '';
 
   return `Eres un asistente legal especializado en empresas CITV (Centros de Inspección Técnica Vehicular) peruanas supervisadas por SUTRAN y el MTC.
 
@@ -291,7 +317,7 @@ Tu tarea es completar una plantilla de carta oficial rellenando ÚNICAMENTE los 
 DATOS DE LA NOTIFICACIÓN:
 - Empresa: ${detail.empresa || ''}
 - RUC: ${detail.ruc || ''}
-- Sede: ${detail.sede || ''}
+- Sede / Ciudad: ${ciudad}
 - Tipo documento: ${detail.tipo_documento || detail.documento || ''}
 - Número documento: ${detail.numero_documento || ''}
 - Referencia: ${detail.referencia || ''}
@@ -302,6 +328,7 @@ DATOS DE LA NOTIFICACIÓN:
 - Resumen: ${detail.resumen || ''}
 - Tareas requeridas: ${detail.tarea || ''}
 - Plazo vencimiento: ${detail.plazo_vencimiento || 'no especificado'}
+- Representante Legal: ${repLegal || '(nombre no disponible)'}
 - Fecha de hoy: ${hoy}
 - Año actual: ${anio}
 
@@ -314,17 +341,22 @@ INSTRUCCIONES ESTRICTAS:
 3. [RUC] → "${detail.ruc || ''}"
 4. [FECHA_HOY] → "${hoy}"
 5. [ANIO] → "${anio}"
-6. [JUSTIFICACION_REPRESENTANTE] → transforma la justificación en lenguaje jurídico formal peruano
-7. [CIUDAD] → deduce de la empresa o usa "Lima"
-8. [REPRESENTANTE_LEGAL] → si no conoces el nombre exacto, usar "[Nombre del Representante Legal]"
-9. [NUMERO_RESPUESTA] → genera número apropiado (ej: 001)
-10. NO modifiques texto fuera de los corchetes
-11. Usa lenguaje jurídico formal peruano
+6. [JUSTIFICACION_REPRESENTANTE] → transforma la justificación en lenguaje jurídico formal peruano, mínimo 3 párrafos
+7. [CIUDAD] → "${ciudad}"
+8. [REPRESENTANTE_LEGAL] → "${repLegal || '[Nombre del Representante Legal]'}"
+9. [NUMERO_RESPUESTA] → genera número correlativo apropiado (ej: 001)
+10. [EMISOR] → "${detail.emisor || 'SUTRAN'}"
+11. [TIPO_DOCUMENTO] → "${detail.tipo_documento || ''}"
+12. [NUMERO_DOCUMENTO] → "${detail.numero_documento || ''}"
+13. [FECHA_NOTIFICACION] → "${detail.fecha_notificacion || ''}"
+14. [ASUNTO] → "${detail.asunto || ''}"
+15. NO modifiques texto fuera de los corchetes
+16. Usa lenguaje jurídico formal peruano a lo largo de todo el documento
 
 PLANTILLA:
 ${templateText}
 
-Devuelve únicamente el documento completo rellenado. Sin comentarios adicionales.`;
+Devuelve únicamente el documento completo rellenado, listo para imprimir. Sin comentarios adicionales.`;
 }
 
 function callDeepSeek_(apiKey, prompt) {

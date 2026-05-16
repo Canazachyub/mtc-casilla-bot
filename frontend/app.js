@@ -729,6 +729,23 @@ function embedDriveUrl(url) {
 
 /* ──────────────────────────── Respuesta tab ───────────────────── */
 
+function guessTemplateId(detail) {
+  const haystack = [
+    detail.tipo_acto     || '',
+    detail.tipo_documento || '',
+    detail.documento      || '',
+    detail.asunto         || '',
+  ].join(' ').toLowerCase();
+
+  if (/ejecuci[oó]n coactiv|medida cautelar|embargo|remate/.test(haystack))
+    return 'carta-cumplimiento';
+  if (/solicitud|acceso.*expediente|expediente/.test(haystack))
+    return 'solicitud-expediente';
+  if (/cumplimiento|subsanar|disposici[oó]n/.test(haystack))
+    return 'carta-cumplimiento';
+  return 'carta-descargo';
+}
+
 function renderResponsePanel(notifId, detail) {
   if (state.templates.length === 0) {
     return `
@@ -738,9 +755,11 @@ function renderResponsePanel(notifId, detail) {
       </div>
     `;
   }
-  const tplOptions = state.templates
-    .map(t => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.nombre)}${t.tipo_notificacion ? ' — ' + escapeHtml(t.tipo_notificacion) : ''}</option>`)
+  const suggestedTpl  = guessTemplateId(detail);
+  const tplOptions    = state.templates
+    .map(t => `<option value="${escapeHtml(t.id)}"${t.id === suggestedTpl ? ' selected' : ''}>${escapeHtml(t.nombre)}${t.tipo_notificacion ? ' — ' + escapeHtml(t.tipo_notificacion) : ''}</option>`)
     .join('');
+  const ciudadDefault = escapeHtml(detail.sede || 'Lima');
   return `
     <div class="response-panel">
       <div class="response-context">
@@ -755,10 +774,14 @@ function renderResponsePanel(notifId, detail) {
         </select>
       </div>
       <div class="form-group">
+        <label class="form-label">Ciudad (encabezado del documento)</label>
+        <input id="resp-ciudad" type="text" class="response-input" value="${ciudadDefault}" placeholder="Lima">
+      </div>
+      <div class="form-group">
         <label class="form-label">Justificación / Insumos</label>
         <textarea id="resp-justification" class="response-textarea"
           placeholder="Fechas relevantes, argumentos legales, datos de la empresa, acciones tomadas..."
-          rows="7"></textarea>
+          rows="6"></textarea>
       </div>
       <button id="btn-generate" class="btn-generate">✨ Generar con IA</button>
       <div id="response-generating" class="response-loading hidden">
@@ -784,8 +807,9 @@ function bindResponsePanelEvents(notifId, detail) {
   document.getElementById('btn-generate').addEventListener('click', async () => {
     const templateId    = document.getElementById('resp-template').value;
     const justificacion = document.getElementById('resp-justification').value.trim();
+    const ciudad        = (document.getElementById('resp-ciudad')?.value || '').trim() || detail.sede || 'Lima';
     if (!templateId) { showToast('Seleccioná una plantilla primero', 'warn'); return; }
-    await handleGenerateResponse(notifId, templateId, justificacion);
+    await handleGenerateResponse(notifId, templateId, justificacion, ciudad);
   });
   const btnDownload = document.getElementById('btn-download-word');
   if (btnDownload) {
@@ -804,7 +828,7 @@ function bindResponsePanelEvents(notifId, detail) {
   }
 }
 
-async function handleGenerateResponse(notifId, templateId, justificacion) {
+async function handleGenerateResponse(notifId, templateId, justificacion, ciudad) {
   const genBtn  = document.getElementById('btn-generate');
   const spinner = document.getElementById('response-generating');
   const output  = document.getElementById('response-output');
@@ -817,8 +841,9 @@ async function handleGenerateResponse(notifId, templateId, justificacion) {
   try {
     const result = await api('generate_response', {
       notification_id: notifId,
-      template_id: templateId,
+      template_id:     templateId,
       justificacion,
+      ciudad:          ciudad || 'Lima',
     });
     document.getElementById('resp-preview').innerText = result.respuesta || '(Sin respuesta generada)';
     output.classList.remove('hidden');
@@ -839,25 +864,125 @@ async function downloadWord(text, filename, detail) {
     showToast('Librería Word no cargada. Revisá la conexión a internet.', 'error');
     return;
   }
-  const { Document, Packer, Paragraph, TextRun } = window.docx;
-  const blocks = text.split(/\n\n+/);
-  const paragraphs = blocks.map(block => {
-    const lines = block.split('\n');
-    const runs  = [];
-    lines.forEach((line, i) => {
-      if (line.trim()) runs.push(new TextRun(line));
-      if (i < lines.length - 1 && lines[i + 1]) runs.push(new TextRun({ break: 1 }));
-    });
+
+  const { Document, Packer, Paragraph, TextRun, AlignmentType } = window.docx;
+
+  const FONT    = 'Arial';
+  const SZ      = 24;  // 12pt (half-points)
+  const SZ_TTL  = 28;  // 14pt for document title
+
+  function run(t, bold, size) {
+    return new TextRun({ text: t, font: FONT, size: size || SZ, bold: !!bold });
+  }
+
+  function para(text, { bold, align, size, spacing } = {}) {
     return new Paragraph({
-      children: runs.length ? runs : [new TextRun('')],
-      spacing:  { after: 200 },
+      children:  [run(text, bold, size)],
+      alignment: align || AlignmentType.LEFT,
+      spacing:   spacing || { line: 360, lineRule: 'auto', after: 160 },
     });
-  });
+  }
+
+  const lines    = text.split('\n');
+  const children = [];
+  let isFirstLine = true;
+  let inSig       = false;
+
+  for (const rawLine of lines) {
+    const t = rawLine.trim();
+
+    if (!t) {
+      children.push(new Paragraph({ text: '', spacing: { after: 100 } }));
+      continue;
+    }
+
+    // Signature divider line: ________________________
+    if (/^_{3,}/.test(t)) {
+      children.push(para('________________________________', {
+        align:   AlignmentType.CENTER,
+        spacing: { before: 480, after: 80 },
+      }));
+      continue;
+    }
+
+    // "Atentamente," triggers signature block
+    if (/^atentamente[,.]?\s*$/i.test(t)) {
+      inSig = true;
+      children.push(para(t, {
+        align:   AlignmentType.CENTER,
+        spacing: { before: 480, after: 80 },
+      }));
+      continue;
+    }
+
+    // Lines after "Atentamente," — centered, bold if all-caps (name)
+    if (inSig) {
+      const isName = /^[A-ZÁÉÍÓÚÑ\s]+$/.test(t) && t.length > 4;
+      children.push(para(t, {
+        bold:    isName,
+        align:   AlignmentType.CENTER,
+        spacing: { after: 80 },
+      }));
+      continue;
+    }
+
+    // Document title: first non-empty line, all-caps (or CARTA/OFICIO/SOLICITUD)
+    if (isFirstLine && /^[A-ZÁÉÍÓÚÑ°\s\-\/\d\.]+$/.test(t) && t.length > 6) {
+      isFirstLine = false;
+      children.push(para(t, {
+        bold:    true,
+        size:    SZ_TTL,
+        align:   AlignmentType.CENTER,
+        spacing: { before: 0, after: 400 },
+      }));
+      continue;
+    }
+    isFirstLine = false;
+
+    // Date / city line: "Lima, 15/05/2026" or "Puno, 15 de mayo de 2026"
+    if (/^[A-ZÁÉÍÓÚÑa-záéíóúñ\s]+,\s*\d{1,2}/.test(t)) {
+      children.push(para(t, {
+        align:   AlignmentType.RIGHT,
+        spacing: { before: 240, after: 240 },
+      }));
+      continue;
+    }
+
+    // ASUNTO: line
+    if (/^ASUNTO:/i.test(t)) {
+      children.push(para(t, {
+        bold:    true,
+        spacing: { before: 160, after: 160 },
+      }));
+      continue;
+    }
+
+    // Roman numeral section headings: I. ANTECEDENTES, II. FUNDAMENTOS, etc.
+    if (/^[IVX]+\.\s/.test(t)) {
+      children.push(para(t, {
+        bold:    true,
+        spacing: { before: 320, after: 160 },
+      }));
+      continue;
+    }
+
+    // Regular body paragraph
+    children.push(para(t));
+  }
+
   const doc = new Document({
     creator: 'MTC Casilla Bot',
     title:   `Respuesta — ${detail?.documento || filename}`,
-    sections: [{ properties: {}, children: paragraphs }],
+    sections: [{
+      properties: {
+        page: {
+          margin: { top: 1800, right: 1440, bottom: 1800, left: 1800 },
+        },
+      },
+      children,
+    }],
   });
+
   try {
     const blob = await Packer.toBlob(doc);
     saveAs(blob, filename + '.docx');
