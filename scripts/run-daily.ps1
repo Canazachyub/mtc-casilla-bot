@@ -1,16 +1,4 @@
-# MTC Casilla Bot — Ejecución diaria automática
-# ─────────────────────────────────────────────
-# Task Scheduler → Acción:
-#   powershell.exe -NonInteractive -ExecutionPolicy Bypass -File "C:\PROGRAMACION\RESOLVE\Resolve\scripts\run-daily.ps1"
-# Desencadenador: Diario a las 08:00 (o la hora que prefieras)
-# Iniciar en: C:\PROGRAMACION\RESOLVE\Resolve
-
-param(
-    [string]$Since = "today",
-    [switch]$DryRun
-)
-
-$ProjectRoot = "C:\PROGRAMACION\RESOLVE\Resolve"
+﻿$ProjectRoot = "C:\PROGRAMACION\RESOLVE\Resolve"
 $UvExe       = "C:\Users\User\.local\bin\uv.exe"
 $LogDir      = "$ProjectRoot\logs"
 $DateStamp   = Get-Date -Format 'yyyy-MM-dd'
@@ -18,70 +6,60 @@ $LogFile     = "$LogDir\run-$DateStamp.log"
 
 New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
 
-function Log {
-    param([string]$msg, [string]$level = "INFO")
-    $line = "[$(Get-Date -Format 'HH:mm:ss')] [$level] $msg"
-    Write-Output $line
-    Add-Content -Path $LogFile -Value $line -Encoding UTF8
+# Elimina codigos ANSI (colores de rich/Python) para escribir al log limpio
+function Strip-Ansi($s) {
+    return [regex]::Replace([string]$s, '\x1b\[[\d;]*[a-zA-Z]|\x1b\][\d;]*[a-zA-Z]', '')
 }
 
-# ── Validaciones previas ────────────────────────────────────────────
+function Log($msg, $level) {
+    if (-not $level) { $level = "INFO" }
+    $line = "[$(Get-Date -Format 'HH:mm:ss')] [$level] $msg"
+    Write-Host $line
+    $clean = "[$(Get-Date -Format 'HH:mm:ss')] [$level] $(Strip-Ansi $msg)"
+    try {
+        [System.IO.File]::AppendAllText($LogFile, $clean + "`r`n", [System.Text.Encoding]::UTF8)
+    } catch {}
+}
+
 Log "=========================================="
-Log "MTC Casilla Bot — Run diario $DateStamp"
+Log "MTC Casilla Bot -- Run diario $DateStamp"
 Log "=========================================="
 
 if (-not (Test-Path $UvExe)) {
     Log "ERROR: uv.exe no encontrado en $UvExe" "ERROR"
-    Log "Revisá que uv esté instalado: winget install astral-sh.uv" "ERROR"
     exit 1
 }
 
-$EnvFile = "$ProjectRoot\.env"
-if (-not (Test-Path $EnvFile)) {
-    Log "WARN: Archivo .env no encontrado en $ProjectRoot" "WARN"
-}
-
 Set-Location $ProjectRoot
-Log "Directorio: $(Get-Location)"
-Log "Parámetros: --since $Since$(if ($DryRun) { ' --dry-run' })"
+Log "Directorio: $ProjectRoot"
 
-# ── Doctor check rápido ─────────────────────────────────────────────
 Log "--- doctor check ---"
-& $UvExe run mtc-bot doctor 2>&1 | ForEach-Object { Log $_ }
+$doctorOut = & $UvExe run mtc-bot doctor 2>&1
+foreach ($l in $doctorOut) { Log "$l" }
+
 if ($LASTEXITCODE -ne 0) {
-    Log "Doctor falló (exit=$LASTEXITCODE) — abortando run" "ERROR"
+    Log "Doctor fallo -- abortando" "ERROR"
     exit $LASTEXITCODE
 }
 
-# ── Ejecución principal ─────────────────────────────────────────────
-Log "--- run --since $Since ---"
+Log "--- run --since today ---"
+$runOut = & $UvExe run mtc-bot run --since today 2>&1
+foreach ($l in $runOut) { Log "$l" }
+$exitCode = $LASTEXITCODE
 
-$RunArgs = @("run", "mtc-bot", "run", "--since", $Since)
-if ($DryRun) { $RunArgs += "--dry-run" }
-
-& $UvExe @RunArgs 2>&1 | ForEach-Object { Log $_ }
-$ExitCode = $LASTEXITCODE
-
-if ($ExitCode -eq 0) {
+if ($exitCode -eq 0) {
     Log "Run completado correctamente" "OK"
 } else {
-    Log "Run finalizó con errores (exit=$ExitCode)" "ERROR"
+    Log "Run finalizo con errores (exit=$exitCode)" "ERROR"
 }
 
-# ── Reprocess: actualizar campos IA faltantes ───────────────────────
-Log "--- reprocess (campos nuevos) ---"
-& $UvExe run mtc-bot reprocess 2>&1 | ForEach-Object { Log $_ }
+Log "--- reprocess ---"
+$reprocessOut = & $UvExe run mtc-bot reprocess 2>&1
+foreach ($l in $reprocessOut) { Log "$l" }
 
-# ── Limpieza de logs viejos (>30 días) ─────────────────────────────
-$Deleted = 0
 Get-ChildItem -Path $LogDir -Filter "run-*.log" |
     Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-30) } |
-    ForEach-Object { Remove-Item $_.FullName -Force; $Deleted++ }
+    ForEach-Object { Remove-Item $_.FullName -Force }
 
-if ($Deleted -gt 0) { Log "Limpiados $Deleted logs antiguos" }
-
-Log "=========================================="
-Log "Fin del run diario (exit=$ExitCode)"
-Log "=========================================="
-
-exit $ExitCode
+Log "Fin del run diario (exit=$exitCode)"
+exit $exitCode
