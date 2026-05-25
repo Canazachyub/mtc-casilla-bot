@@ -31,7 +31,7 @@ function doPost(e) {
     const body   = JSON.parse(e.postData.contents);
     const action = (body.action || '').toLowerCase();
     switch (action) {
-      case 'upload_empresa_doc':  return jsonResponse_(handleUploadEmpresaDoc_(body));
+      case 'upload_empresa_doc':   return jsonResponse_(handleUploadEmpresaDoc_(body));
       case 'save_tarea_manual':   return jsonResponse_(handleSaveTareaManual_(body));
       default:                    return jsonResponse_({ error: 'unknown_action', action });
     }
@@ -127,6 +127,7 @@ function doGet(e) {
       case 'update_status':     return jsonResponse_(handleUpdateStatus_(e.parameter));
       case 'generate_response': return jsonResponse_(handleGenerateResponse_(e.parameter));
       case 'pdf':               return handlePdfRedirect_(e.parameter);
+      case 'get_empresa_docs':  return jsonResponse_(handleGetEmpresaDocs_());
       case 'health':            return jsonResponse_({ ok: true, ts: new Date().toISOString() });
       default:                  return jsonResponse_({ error: 'unknown_action', action });
     }
@@ -504,6 +505,21 @@ function handleSummaryCached_() {
 function jsonResponse_(payload) {
   return ContentService.createTextOutput(JSON.stringify(payload))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+function handleGetEmpresaDocs_() {
+  const ss    = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+  const sheet = ss.getSheetByName(CONFIG.TAB_EMPRESA_DOCS);
+  if (!sheet) return { docs: [] };
+  const rows = sheet.getDataRange().getValues();
+  if (rows.length < 2) return { docs: [] };
+  const headers = rows[0];
+  const docs = rows.slice(1).map(r => {
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = r[i] instanceof Date ? r[i].toISOString() : r[i]; });
+    return obj;
+  });
+  return { docs };
 }
 
 function handleSaveTareaManual_(body) {

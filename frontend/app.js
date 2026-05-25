@@ -156,6 +156,9 @@ async function loadAll() {
     populateEmpresaFilter(state.items);
     applyFilters();
 
+    // Sincronizar docs de empresa desde el Sheet (para que funcione en cualquier navegador)
+    syncEmpresaDocsFromApi();
+
     document.getElementById('last-update').textContent =
       'Actualizado ' + new Date().toLocaleTimeString('es-PE');
     document.getElementById('api-status').innerHTML =
@@ -1541,6 +1544,33 @@ function handleSaveUrl(e) {
   showDashboard();
   loadTemplates();
   loadAll();
+}
+
+/* ──────────────────────────── Sync empresa docs desde API ─────── */
+
+async function syncEmpresaDocsFromApi() {
+  try {
+    const data = await api('get_empresa_docs');
+    if (!data.docs || data.docs.length === 0) return;
+    const empresas = loadEmpresasFromStorage();
+    let changed = false;
+    data.docs.forEach(doc => {
+      const emp = empresas[doc.empresa_key];
+      if (!emp || !emp.documentos[doc.doc_key]) return;
+      const current = emp.documentos[doc.doc_key];
+      // Solo actualizar si el Sheet tiene una URL más reciente
+      if (doc.view_url && doc.view_url !== current.url) {
+        current.url   = doc.view_url;
+        current.fecha = (doc.fecha_subida || '').slice(0, 10);
+        changed = true;
+      }
+    });
+    if (changed) {
+      saveEmpresasToStorage(empresas);
+      // Si la vista empresas está abierta, refrescarla
+      if (state.view === 'empresas') renderEmpresasView();
+    }
+  } catch (_) {}
 }
 
 /* ──────────────────────────── Tareas manuales ─────────────────── */
