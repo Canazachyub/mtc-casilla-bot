@@ -73,25 +73,30 @@
 
   <!-- Vista nav tabs -->
   <nav class="view-nav">
-    <button class="view-tab active" data-view="pending">
-      <span class="view-tab-icon">📋</span>
+    <button class="view-tab active" data-view="all">
+      <span class="view-tab-icon">☰</span>
       Tareas pendientes
+      <span class="vtab-badge" id="vtab-all-badge"></span>
+    </button>
+    <button class="view-tab" data-view="pending">
+      <span class="view-tab-icon">📋</span>
+      Casillas en proceso
       <span class="vtab-badge" id="vtab-pending-badge"></span>
     </button>
-    <button class="view-tab" data-view="all">
-      <span class="view-tab-icon">☰</span>
-      Todas las notificaciones
-      <span class="vtab-badge" id="vtab-all-badge"></span>
+    <button class="view-tab" data-view="empresas">
+      <span class="view-tab-icon">🏢</span>
+      Empresas
     </button>
   </nav>
 
   <!-- Filtros -->
   <section class="filters" id="filters-bar">
+    <button id="btn-nueva-tarea" class="btn-add-tarea" title="Agregar tarea manual">➕ Nueva tarea</button>
     <input type="search" id="filter-search" placeholder="🔎 Buscar (documento, empresa, asunto, tarea)...">
     <select id="filter-empresa"><option value="">Todas las empresas</option></select>
     <select id="filter-progreso" class="filter-all-only">
       <option value="">Todos los estados</option>
-      <option value="NO INICIADO">No iniciado</option>
+<option value="NO INICIADO">No iniciado</option>
       <option value="AGENDAR">Agendar</option>
       <option value="EN REVISIÓN">En revisión</option>
       <option value="PRESENTADO">Presentado</option>
@@ -151,7 +156,167 @@
         <p class="muted small">Cuando el bot Python procese su primera notificación, aparecerá acá.</p>
       </div>
     </div>
+
+    <!-- Vista: Empresas -->
+    <div id="view-empresas" class="hidden">
+      <div class="empresas-toolbar">
+        <h2 class="empresas-title">Gestión de Empresas</h2>
+        <button id="btn-nueva-empresa" class="btn-add-empresa">➕ Nueva empresa</button>
+      </div>
+      <div id="empresas-list"></div>
+
+      <!-- Modal nueva empresa -->
+      <div id="modal-empresa" class="modal-empresa hidden">
+        <div class="modal-empresa-content">
+          <div class="modal-empresa-header">
+            <h3 id="modal-empresa-title">Nueva Empresa</h3>
+            <button class="modal-empresa-close" id="btn-cerrar-empresa">✕</button>
+          </div>
+          <form id="form-empresa" class="empresa-form" autocomplete="off">
+            <div class="empresa-form-grid">
+              <div class="form-group">
+                <label class="form-label">Nombre clave *</label>
+                <input type="text" id="fe-key" class="response-input" placeholder="Ej: ESPINAR" required>
+              </div>
+              <div class="form-group">
+                <label class="form-label">RUC *</label>
+                <input type="text" id="fe-ruc" class="response-input" placeholder="20602194958" maxlength="11" required>
+              </div>
+              <div class="form-group full-width">
+                <label class="form-label">Nombre legal completo *</label>
+                <input type="text" id="fe-nombre" class="response-input" placeholder="CENTRO DE INSPECCIONES TÉCNICAS..." required>
+              </div>
+              <div class="form-group full-width">
+                <label class="form-label">Descripción / personería jurídica completa</label>
+                <textarea id="fe-descripcion" class="response-textarea" rows="4" placeholder="Texto legal completo que se usará como contexto al generar respuestas..."></textarea>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Sede / Ciudad</label>
+                <input type="text" id="fe-sede" class="response-input" placeholder="Ej: Lima">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Método de acceso al scraper</label>
+                <select id="fe-auth" class="response-select">
+                  <option value="clave_sol">Clave SOL (SUNAT)</option>
+                  <option value="direct">Directo (RUC + DNI + contraseña)</option>
+                </select>
+              </div>
+            </div>
+
+            <div id="fe-creds-direct" class="creds-section hidden">
+              <p class="creds-section-title">🔑 Credenciales Casilla Directa</p>
+              <div class="empresa-form-grid">
+                <div class="form-group">
+                  <label class="form-label">DNI representante legal</label>
+                  <input type="password" id="fe-dni" class="response-input" placeholder="12345678" autocomplete="new-password">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Contraseña casilla MTC</label>
+                  <input type="password" id="fe-pass" class="response-input" placeholder="••••••••" autocomplete="new-password">
+                </div>
+              </div>
+            </div>
+
+            <div id="fe-creds-sol" class="creds-section">
+              <p class="creds-section-title">🔑 Credenciales Clave SOL</p>
+              <div class="empresa-form-grid">
+                <div class="form-group">
+                  <label class="form-label">Usuario SOL</label>
+                  <input type="text" id="fe-sol-user" class="response-input" placeholder="USUARIO01" autocomplete="new-password">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Clave SOL</label>
+                  <input type="password" id="fe-sol-clave" class="response-input" placeholder="••••••••" autocomplete="new-password">
+                </div>
+              </div>
+            </div>
+
+            <div class="empresa-form-actions">
+              <label class="check"><input type="checkbox" id="fe-activo" checked> Activa (incluir en el scraping)</label>
+              <div>
+                <button type="button" id="btn-cancelar-empresa" class="btn-secondary">Cancelar</button>
+                <button type="submit" class="btn-generate" style="padding:0.5rem 1.4rem">💾 Guardar empresa</button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
   </main>
+
+  <!-- Modal nueva tarea manual -->
+  <div id="modal-nueva-tarea" class="modal-empresa hidden">
+    <div class="modal-empresa-content" style="max-width:580px">
+      <div class="modal-empresa-header">
+        <h3>➕ Nueva tarea manual</h3>
+        <button class="modal-empresa-close" id="btn-cerrar-nueva-tarea">✕</button>
+      </div>
+      <form id="form-nueva-tarea" class="empresa-form" autocomplete="off">
+
+        <div class="form-group">
+          <label class="form-label">Empresa *</label>
+          <select id="nt-empresa" class="response-select" required>
+            <option value="">— Seleccioná la empresa —</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Título / Documento *</label>
+          <input type="text" id="nt-documento" class="response-input"
+            placeholder="Ej: Renovación póliza de seguros, Reunión SUTRAN..." required>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Descripción / Asunto</label>
+          <textarea id="nt-asunto" class="response-textarea" rows="2"
+            placeholder="Detalle de lo que hay que hacer..."></textarea>
+        </div>
+
+        <div class="empresa-form-grid">
+          <div class="form-group">
+            <label class="form-label">Fecha</label>
+            <input type="date" id="nt-fecha" class="response-input">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Plazo de vencimiento</label>
+            <input type="date" id="nt-plazo" class="response-input">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Estado inicial</label>
+            <select id="nt-progreso" class="response-select">
+              <option value="NO INICIADO">No iniciado</option>
+              <option value="AGENDAR">Agendar</option>
+              <option value="EN REVISIÓN">En revisión</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Tarea principal</label>
+            <input type="text" id="nt-tarea" class="response-input"
+              placeholder="Ej: presentar documentos, pagar multa...">
+          </div>
+        </div>
+
+        <div class="empresa-form-actions">
+          <span class="muted small">Se guarda localmente y en el Sheet si hay API</span>
+          <div>
+            <button type="button" id="btn-cancelar-nueva-tarea" class="btn-secondary">Cancelar</button>
+            <button type="submit" class="btn-generate" style="padding:0.5rem 1.4rem">➕ Agregar tarea</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal previsualización PDF empresa -->
+  <div id="modal-pdf-preview" class="modal-pdf-preview hidden">
+    <div class="modal-pdf-content">
+      <div class="modal-pdf-header">
+        <span id="modal-pdf-title" class="modal-pdf-title"></span>
+        <button id="btn-cerrar-pdf-preview" class="modal-empresa-close">✕</button>
+      </div>
+      <iframe id="pdf-preview-frame" class="pdf-preview-frame" src="" allowfullscreen></iframe>
+    </div>
+  </div>
 
   <!-- Modal detalle + respuesta -->
   <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">

@@ -355,6 +355,61 @@ def doctor_cmd() -> None:
 # ─────────────────────────────────────────────────────────────────
 
 
+def _short_name(empresa: str) -> str:
+    """Deriva nombre corto de la razón social para el resumen."""
+    import re as _re
+    s = _re.sub(r'\s*\([^)]+\)', '', empresa).strip()
+    s = _re.sub(r'\b(SAC|EIRL|SRL|S\.A\.C\.|S\.R\.L\.|LTDA|S\.A\.)\b\.?', '', s, flags=_re.IGNORECASE)
+    s = _re.sub(r'\bCITV\s+', '', s, flags=_re.IGNORECASE)
+    s = _re.sub(r'\s+', ' ', s).strip(' -')
+    return s or empresa
+
+
+def _print_run_summary(
+    results: list[tuple[str, int, int, str | None]],
+    since_date: "date | None",
+) -> None:
+    """Imprime el resumen final copy-paste listo para WhatsApp."""
+    from datetime import date as _date
+    hoy = _date.today()
+    if since_date == hoy:
+        fecha_label = "al día de hoy"
+    elif since_date is not None:
+        fecha_label = f"desde {since_date.strftime('%d/%m/%Y')}"
+    else:
+        fecha_label = "de todas las fechas"
+
+    lines: list[str] = [f"De la revisión de casillas de MTC {fecha_label}:"]
+    nuevas_total = 0
+    for empresa, listed, completados, error in results:
+        name = _short_name(empresa)
+        if error:
+            lines.append(f"• {name}: ❌ error de conexión (timeout MTC)")
+        elif completados > 0:
+            nuevas_total += completados
+            suf = "es" if completados > 1 else ""
+            lines.append(f"• {name}: *{completados:02d} notificación{suf} nueva{'s' if completados > 1 else ''}* ✅")
+        elif listed > 0:
+            lines.append(f"• {name}: {listed} encontradas (ya registradas).")
+        else:
+            lines.append(f"• {name}: no hay notificaciones nuevas.")
+
+    resumen_body = "\n".join(lines)
+    border = "green" if nuevas_total > 0 else "cyan"
+    console.print(
+        Panel(
+            resumen_body,
+            title=f"[bold]RESUMEN — {hoy.strftime('%d/%m/%Y')}[/bold]",
+            border_style=border,
+            padding=(1, 2),
+        )
+    )
+    # Versión plain-text (fácil de copiar)
+    console.print("\n[dim]── Texto para copiar ──[/dim]")
+    console.print(resumen_body)
+    console.print()
+
+
 def _parse_since(since: str) -> date | None:
     """Convierte la opción ``--since`` a fecha. Lanza ``typer.Exit`` si es inválido."""
     from datetime import timedelta
@@ -566,7 +621,25 @@ async def _process_notification(  # noqa: PLR0911,PLR0912,PLR0913,PLR0915 — pi
     timestamp_proceso = datetime.now(tz=ZoneInfo("America/Lima")).isoformat(
         timespec="seconds",
     )
-    plazo_venc = _estimate_vencimiento(item.fecha, extraction.plazo_dias_habiles)
+
+    # Fecha definitiva: preferir la del detalle (más precisa, incluye hora) si
+    # la del inbox no se pudo parsear (date.min = fallback por formato desconocido).
+    from datetime import date as _date
+    fecha_final = item.fecha
+    if fecha_final == _date.min:
+        if detail_md.fecha is not None:
+            logger.warning(
+                "Usando fecha del DETALLE como fallback (%s) — la fecha del inbox no pudo parsearse",
+                detail_md.fecha,
+            )
+            fecha_final = detail_md.fecha
+        else:
+            logger.warning(
+                "Sin fecha válida ni en inbox ni en detalle para notif %s — se usará date.min",
+                item.notification_id,
+            )
+
+    plazo_venc = _estimate_vencimiento(fecha_final, extraction.plazo_dias_habiles)
 
     # Sede: usar la del RUC, pero si es LIDERSUR Puno y el texto menciona
     # Puerto Maldonado, usar esa sede en su lugar.
@@ -579,8 +652,8 @@ async def _process_notification(  # noqa: PLR0911,PLR0912,PLR0913,PLR0915 — pi
     row: dict[str, str | int | float | bool | None] = {
         "id": sheet_id_value,
         "timestamp_proceso": timestamp_proceso,
-        "fecha_notificacion": item.fecha.isoformat(),
-        "lectura_notificacion": item.fecha.isoformat(),
+        "fecha_notificacion": fecha_final.isoformat(),
+        "lectura_notificacion": fecha_final.isoformat(),
         "ruc": item.ruc,
         "empresa": creds.empresa,
         "sede": sede,
@@ -657,10 +730,15 @@ async def _process_one_ruc(  # noqa: PLR0913 — función privada del CLI
         page = await ctx.new_page()
         try:
             await perform_login(page, creds)
-        except (LoginFailed, NotImplementedError) as exc:
+        except LoginFailed as exc:
+            if "timeout" in str(exc).lower():
+                raise  # propagar para que _run_all reintente
             console.print(f"  [red]✗[/red] {creds.ruc[:5]}*** login falló: {exc}")
             if not headless:
                 await _take_screenshot(page, shots_dir / "login_failed.png", "login_failed")
+            return 0, 0
+        except NotImplementedError as exc:
+            console.print(f"  [red]✗[/red] {creds.ruc[:5]}*** auth no implementada: {exc}")
             return 0, 0
 
         items = await list_inbox(page, creds.ruc, since=since_date, limit=limit)
@@ -738,32 +816,64 @@ def run_cmd(
     headless = not (headed or settings.mtc_bot_headed)
     downloads_root_base = PROJECT_ROOT / "data" / "downloads"
 
+    _MAX_ATTEMPTS = 3   # 1 intento original + 2 reintentos
+    _RETRY_WAIT_S = 30  # segundos entre reintentos (aumentado para evitar rate-limit)
+    _INTER_RUC_WAIT_S = 15  # pausa entre compañías — evita Cloudflare 1015
+
     async def _run_all() -> None:
         console.print(
             f"\n[bold]Procesando {len(targets)} RUC(s) — "
             f"since={since}, limit={limit}, dry_run={dry_run}[/bold]\n"
         )
+        run_results: list[tuple[str, int, int, str | None]] = []
         # Secuencial por RUC: regla del proyecto (no paralelizar el mismo RUC).
-        for creds in targets:
+        for idx, creds in enumerate(targets):
+            # Pausa entre compañías para no disparar el rate-limit de Cloudflare.
+            if idx > 0:
+                console.print(f"  [dim]Esperando {_INTER_RUC_WAIT_S}s antes de la siguiente empresa...[/dim]")
+                await asyncio.sleep(_INTER_RUC_WAIT_S)
             console.print(f"[cyan]→ {creds.empresa}[/cyan]")
-            try:
-                listed, completados = await _process_one_ruc(
-                    creds,
-                    since_date,
-                    limit,
-                    dry_run,
-                    headless,
-                    downloads_root_base,
-                    settings,
-                )
+            last_exc: Exception | None = None
+            listed = completados = 0
+            for attempt in range(1, _MAX_ATTEMPTS + 1):
+                try:
+                    listed, completados = await _process_one_ruc(
+                        creds,
+                        since_date,
+                        limit,
+                        dry_run,
+                        headless,
+                        downloads_root_base,
+                        settings,
+                    )
+                    last_exc = None
+                    break  # éxito — salir del loop de reintentos
+                except Exception as exc:  # noqa: BLE001
+                    last_exc = exc
+                    is_timeout = "Timeout" in str(exc) or "timeout" in str(exc).lower()
+                    if is_timeout and attempt < _MAX_ATTEMPTS:
+                        console.print(
+                            f"  [yellow]⚠ Timeout MTC — reintentando en {_RETRY_WAIT_S}s "
+                            f"(intento {attempt + 1}/{_MAX_ATTEMPTS})[/yellow]"
+                        )
+                        await asyncio.sleep(_RETRY_WAIT_S)
+                    else:
+                        break  # error no recuperable o último intento
+
+            if last_exc is not None:
+                run_results.append((creds.empresa, 0, 0, str(last_exc)))
+                console.print(f"  [red]✗ Error fatal: {last_exc}[/red]\n")
+            else:
+                run_results.append((creds.empresa, listed, completados, None))
                 if dry_run:
                     console.print(f"  [green]✓[/green] {listed} listadas (dry-run)\n")
                 else:
                     console.print(
                         f"  [green]✓[/green] {listed} listadas, {completados} completadas (Sheet)\n"
                     )
-            except Exception as exc:  # noqa: BLE001 — no abortar batch
-                console.print(f"  [red]✗ Error fatal: {exc}[/red]\n")
+
+        if not dry_run:
+            _print_run_summary(run_results, since_date)
 
     asyncio.run(_run_all())
 
@@ -910,6 +1020,23 @@ async def _reprocess_async(limit: int, all_fields: bool, dry_run: bool) -> None:
     if not rows:
         console.print("[green]✓ No hay notificaciones pendientes de re-procesar.[/green]")
         return
+
+    # Verificar columnas destino ANTES de procesar (evita falsos positivos)
+    if not dry_run:
+        target_fields = NEW_FIELDS if not all_fields else ALL_AI_FIELDS
+        sample_keys = set(rows[0].keys()) if rows else set()
+        missing_cols = sorted(f for f in target_fields if f not in sample_keys)
+        if missing_cols:
+            console.print("[red bold]✗ Las siguientes columnas no existen en el Sheet:[/red bold]")
+            for col in missing_cols:
+                console.print(f"  [red]  • {col}[/red]")
+            console.print(
+                "\n[yellow]Agregá esas columnas al tab "
+                f"'{settings.sheet_tab_notificaciones}' del Sheet "
+                "y volvé a ejecutar:[/yellow]\n"
+                "  [cyan]uv run mtc-bot reprocess[/cyan]"
+            )
+            raise typer.Exit(code=1)
 
     total = min(len(rows), limit)
     console.print(f"  {len(rows)} filas candidatas · procesando {total}\n")

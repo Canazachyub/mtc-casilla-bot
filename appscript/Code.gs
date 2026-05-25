@@ -18,12 +18,102 @@ const CONFIG = Object.freeze({
   TAB_NOTIFICACIONES: 'notificaciones',
   TAB_LOGS: 'logs',
   TAB_PLANTILLAS: 'plantillas',
+  TAB_EMPRESA_DOCS: 'empresa_docs',
   CACHE_TTL_SECONDS: 60,
   ALLOWED_ESTADOS:  ['pendiente', 'en-proceso', 'completado', 'informativo', 'archivada'],
   ALLOWED_PROGRESO: ['NO INICIADO', 'AGENDAR', 'EN REVISIÓN', 'PRESENTADO'],
 });
 
 /* ────────── Entry point ────────── */
+/* ────────── POST entry point (upload de docs de empresa) ────────── */
+function doPost(e) {
+  try {
+    const body   = JSON.parse(e.postData.contents);
+    const action = (body.action || '').toLowerCase();
+    switch (action) {
+      case 'upload_empresa_doc': return jsonResponse_(handleUploadEmpresaDoc_(body));
+      default:                   return jsonResponse_({ error: 'unknown_action', action });
+    }
+  } catch (err) {
+    logError_('doPost', err, {});
+    return jsonResponse_({ error: 'internal', message: err.message });
+  }
+}
+
+function handleUploadEmpresaDoc_(body) {
+  const { empresa_key, doc_key, file_base64, file_name } = body;
+  if (!empresa_key || !doc_key || !file_base64 || !file_name)
+    throw new Error('Faltan campos obligatorios: empresa_key, doc_key, file_base64, file_name');
+
+  const props       = PropertiesService.getScriptProperties();
+  const rootId      = props.getProperty('DRIVE_ROOT_FOLDER_ID');
+  if (!rootId) throw new Error('DRIVE_ROOT_FOLDER_ID no configurado en Script Properties');
+
+  const root        = DriveApp.getFolderById(rootId);
+  const empresasDir = getOrCreateFolder_(root, 'Empresas');
+  const empresaDir  = getOrCreateFolder_(empresasDir, empresa_key);
+
+  // Eliminar versión anterior si existe
+  const old = empresaDir.getFilesByName(file_name);
+  while (old.hasNext()) old.next().setTrashed(true);
+
+  // Subir
+  const bytes = Utilities.base64Decode(file_base64);
+  const blob  = Utilities.newBlob(bytes, 'application/pdf', file_name);
+  const file  = empresaDir.createFile(blob);
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+  const fileId     = file.getId();
+  const view_url   = 'https://drive.google.com/file/d/' + fileId + '/view';
+  const preview_url = 'https://drive.google.com/file/d/' + fileId + '/preview';
+
+  // Registrar en Sheet tab "empresa_docs"
+  registrarDocEmpresa_({ empresa_key, doc_key, file_name, view_url, preview_url });
+
+  return { ok: true, file_id: fileId, view_url, preview_url, file_name };
+}
+
+function registrarDocEmpresa_(data) {
+  const ss       = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+  const HEADERS  = ['empresa_key', 'doc_key', 'file_name', 'view_url', 'preview_url', 'fecha_subida'];
+  let   sheet    = ss.getSheetByName(CONFIG.TAB_EMPRESA_DOCS);
+
+  // Crear hoja si no existe
+  if (!sheet) {
+    sheet = ss.insertSheet(CONFIG.TAB_EMPRESA_DOCS);
+    sheet.appendRow(HEADERS);
+    sheet.setFrozenRows(1);
+  }
+
+  const now    = new Date().toISOString();
+  const rows   = sheet.getDataRange().getValues();
+  const headers = rows[0];
+  const eKey   = headers.indexOf('empresa_key');
+  const dKey   = headers.indexOf('doc_key');
+
+  // Actualizar fila existente si ya hay registro para empresa+doc
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][eKey] === data.empresa_key && rows[i][dKey] === data.doc_key) {
+      sheet.getRange(i + 1, 1, 1, HEADERS.length).setValues([[
+        data.empresa_key, data.doc_key, data.file_name,
+        data.view_url, data.preview_url, now,
+      ]]);
+      return;
+    }
+  }
+
+  // Nueva fila
+  sheet.appendRow([
+    data.empresa_key, data.doc_key, data.file_name,
+    data.view_url, data.preview_url, now,
+  ]);
+}
+
+function getOrCreateFolder_(parentFolder, name) {
+  const it = parentFolder.getFoldersByName(name);
+  return it.hasNext() ? it.next() : parentFolder.createFolder(name);
+}
+
 function doGet(e) {
   try {
     const action = (e.parameter.action || 'list').toLowerCase();

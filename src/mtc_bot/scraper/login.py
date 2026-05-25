@@ -11,6 +11,7 @@ nunca PERSONA NATURAL.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -35,8 +36,8 @@ LOGIN_URL: str = "https://casilla.mtc.gob.pe/#/auth/login"
 INBOX_URL_GLOB: str = "**/casilla**"
 SUNAT_HOST_FRAGMENT: str = "sunat.gob.pe"
 
-DEFAULT_TIMEOUT_MS: int = 30_000
-LOGIN_NAV_TIMEOUT_MS: int = 15_000
+DEFAULT_TIMEOUT_MS: int = 60_000
+LOGIN_NAV_TIMEOUT_MS: int = 30_000
 
 # Cantidad mínima de dígitos del RUC que se exponen al enmascarar (los primeros N).
 _RUC_MASK_PREFIX = 5
@@ -131,7 +132,7 @@ async def browser_session(
         browser = await p.chromium.launch(
             headless=headless,
             args=launch_args,
-            slow_mo=200 if not headless else 0,
+            slow_mo=50 if not headless else 0,
         )
         context_kwargs: dict[str, object] = {
             "accept_downloads": True,
@@ -171,9 +172,13 @@ async def browser_session(
 async def _ensure_persona_juridica(page: Page) -> None:
     """Asegura que el dropdown ``tipoPersona`` esté en ``PERSONA JURIDICA``.
 
-    Lee el texto visible actual del ``mat-select``; si ya muestra
-    ``PERSONA JURIDICA`` no hace nada. Caso contrario, abre el dropdown y
-    selecciona la opción correcta.
+    Flujo:
+        1. Esperar el trigger (``.mat-mdc-select-trigger``) en el DOM.
+        2. Esperar que Angular haya seteado el valor (``innerText != ''``).
+           Sin este paso, el click abre un panel vacío o no abre nada.
+        3. Si ya es JURIDICA, retornar.
+        4. Click en el trigger → esperar ``mat-option`` visible.
+        5. Fallback teclado si el click no abrió el panel.
 
     Args:
         page: página del browser ya posicionada en el form de login.
@@ -181,21 +186,59 @@ async def _ensure_persona_juridica(page: Page) -> None:
     select_locator = page.locator(SEL_TIPO_PERSONA).first
     await select_locator.wait_for(state="visible", timeout=DEFAULT_TIMEOUT_MS)
 
+    trigger_sel = (
+        "mat-select[formcontrolname='tipoPersona'] .mat-mdc-select-trigger, "
+        "mat-select[formcontrolname='tipoPersona'] .mat-select-trigger"
+    )
     try:
-        current_text = (await select_locator.inner_text(timeout=2_000)).strip().upper()
-    except PlaywrightTimeoutError:
-        current_text = ""
+        await page.wait_for_selector(trigger_sel, state="visible", timeout=45_000)
+    except PlaywrightTimeoutError as exc:
+        raise LoginFailed(
+            "mat-select trigger no apareció en 45 s — Angular no finalizó bootstrap"
+        ) from exc
 
-    if "JURIDICA" in current_text or "JURÍDICA" in current_text:
-        logger.debug("tipoPersona ya está en PERSONA JURIDICA")
+    # Esperar que Angular complete el data binding y ponga el valor en innerText.
+    # El trigger puede estar en el DOM ANTES de que el binding se aplique.
+    # Si interactuamos antes, el panel se abre vacío o no abre.
+    _JS_VALUE_READY = (
+        "() => { const s = document.querySelector(\"mat-select[formcontrolname='tipoPersona']\");"
+        " return !!(s && s.innerText && s.innerText.trim().length > 0); }"
+    )
+    try:
+        await page.wait_for_function(_JS_VALUE_READY, timeout=25_000)
+    except PlaywrightTimeoutError:
+        logger.warning(
+            "mat-select innerText no se pobló en 25s — Angular puede no haber terminado el binding"
+        )
+
+    try:
+        current = (await select_locator.inner_text(timeout=2_000)).strip().upper()
+    except PlaywrightTimeoutError:
+        current = ""
+
+    if "JURIDICA" in current or "JURÍDICA" in current:
+        logger.debug("tipoPersona ya en PERSONA JURIDICA")
         return
 
-    logger.info("Cambiando tipoPersona a PERSONA JURIDICA (estado actual=%r)", current_text)
-    await select_locator.click()
-    option = page.locator(SEL_MAT_OPTION_PJ).first
-    await option.wait_for(state="visible", timeout=DEFAULT_TIMEOUT_MS)
-    await option.click()
-    # Esperar a que el panel se cierre antes de seguir tipeando
+    logger.info("Cambiando tipoPersona a PERSONA JURIDICA (estado actual=%r)", current)
+
+    trigger_loc = page.locator(trigger_sel).first
+    await trigger_loc.scroll_into_view_if_needed()
+    await page.bring_to_front()  # asegurar foco para que los eventos Angular lleguen
+    await trigger_loc.click(timeout=5_000)
+
+    option_loc = page.locator(SEL_MAT_OPTION_PJ).first
+    try:
+        await option_loc.wait_for(state="visible", timeout=12_000)
+    except PlaywrightTimeoutError:
+        # Fallback: teclado. Algunos contextos Playwright no disparan el MouseEvent
+        # que Angular escucha. Space abre el panel en Angular Material.
+        logger.warning("Panel no abrió con click — intentando con teclado (Space)")
+        await select_locator.focus()
+        await page.keyboard.press("Space")
+        await option_loc.wait_for(state="visible", timeout=12_000)
+
+    await option_loc.click()
     await page.wait_for_selector("mat-option", state="hidden", timeout=DEFAULT_TIMEOUT_MS)
 
 
@@ -243,11 +286,8 @@ def _mask_ruc(ruc: str) -> str:
 async def _open_mtc_login_with_pj(page: Page) -> None:
     """Navega al login MTC y asegura el dropdown ``tipoPersona`` en JURIDICA.
 
-    Encapsula los dos pasos comunes a cualquier flujo de autenticación
-    (``login_direct`` y ``login_clave_sol``):
-
-        1. ``page.goto(LOGIN_URL)`` y espera al ``mat-select`` de tipoPersona.
-        2. Asegura ``PERSONA JURIDICA`` en el dropdown.
+    Usar solo para ``login_direct``. Para ``login_clave_sol`` no es necesario
+    cambiar el dropdown — SUNAT autentica por RUC independientemente.
 
     Args:
         page: página del browser sobre la que operar.
@@ -255,6 +295,20 @@ async def _open_mtc_login_with_pj(page: Page) -> None:
     await page.goto(LOGIN_URL, wait_until="domcontentloaded")
     await page.wait_for_selector(SEL_TIPO_PERSONA, state="visible", timeout=DEFAULT_TIMEOUT_MS)
     await _ensure_persona_juridica(page)
+
+
+async def _open_mtc_login_clave_sol(page: Page) -> None:
+    """Navega al login MTC y espera el botón Clave SOL sin tocar el dropdown.
+
+    Para Clave SOL no hace falta seleccionar PERSONA JURIDICA — SUNAT identifica
+    al usuario por RUC + clave SOL y MTC acepta el redirect como JURIDICA.
+
+    Args:
+        page: página del browser sobre la que operar.
+    """
+    await page.goto(LOGIN_URL, wait_until="domcontentloaded")
+    await page.bring_to_front()
+    await page.wait_for_selector(SEL_BTN_CLAVE_SOL, state="visible", timeout=DEFAULT_TIMEOUT_MS)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -374,10 +428,11 @@ async def login_clave_sol(page: Page, creds: RucCredentials) -> None:
     masked = _mask_ruc(creds.ruc)
     logger.info("Login CLAVE SOL iniciado para RUC %s (empresa=%s)", masked, creds.empresa)
 
-    # 1-2. Login MTC PJ + click btn-clave-sol
-    await _open_mtc_login_with_pj(page)
+    # 1. Navegar al login MTC — NO cambiar tipo persona (Clave SOL no lo requiere)
+    await _open_mtc_login_clave_sol(page)
+
+    # 2. Click en Clave SOL
     btn_sol = page.locator(SEL_BTN_CLAVE_SOL).first
-    await btn_sol.wait_for(state="visible", timeout=DEFAULT_TIMEOUT_MS)
     await btn_sol.click()
 
     # 3. Esperar landing en SUNAT (URL contiene sunat.gob.pe)
@@ -414,11 +469,12 @@ async def login_clave_sol(page: Page, creds: RucCredentials) -> None:
     await page.locator(SUNAT_SEL_BTN_SUBMIT).first.click()
 
     # 8. Esperar redirect de vuelta a MTC + UI del inbox
+    # Usa DEFAULT_TIMEOUT_MS (60s): el render Angular post-OAuth puede ser lento.
     try:
         await page.wait_for_selector(
             SEL_HEADER_REP_LEGAL,
             state="visible",
-            timeout=LOGIN_NAV_TIMEOUT_MS,
+            timeout=DEFAULT_TIMEOUT_MS,
         )
     except PlaywrightTimeoutError as exc:
         current_url = page.url

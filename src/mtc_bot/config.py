@@ -124,7 +124,7 @@ class Settings(BaseSettings):
 
     # ─ MTC scraper ─
     mtc_credentials_csv: Path = Field(default=Path("data/credentials/rucs.csv"))
-    playwright_timeout_ms: int = Field(default=30000, validation_alias="PLAYWRIGHT_TIMEOUT")
+    playwright_timeout_ms: int = Field(default=60000, validation_alias="PLAYWRIGHT_TIMEOUT")
     mtc_bot_headed: bool = Field(default=False, validation_alias="MTC_BOT_HEADED")
     max_concurrent_rucs: int = 1
     max_retries: int = 3

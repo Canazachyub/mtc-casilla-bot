@@ -7,6 +7,54 @@
 const STORAGE_KEY    = 'mtc_bot_api_url';
 const API_URL_PREFIX = 'https://script.google.com/macros/';
 
+/* ──────────────────────────── Datos legales de empresas ───────── */
+const EMPRESAS_LEGALES = {
+  'CEDIJICA': {
+    nombre: 'CEDIJICA',
+    texto: 'CENTRO DE INSPECCIÓN TÉCNICA VEHICULAR CEDIJICA S.A.C., con RUC N° 20608210939, debidamente representado por JORGE LENIN QUISPE VILCHEZ Identificado con DNI N° 48986264 con domicilio legal en ubicado en la Avenida Sinchi Roca, Manzana I, Lote 08, Lgr. Asociación de Posesionarios Del Sector Pedregal, distrito de San Antonio, provincia de Huarochirí, departamento de Lima; con poder inscrito en la Partida Electrónica N° 14717580, del Registro de Personas Jurídicas de la Oficina Registral de Lima, de la Superintendencia Nacional de los Registros Públicos – SUNARP.',
+  },
+  'ESPINAR': {
+    nombre: 'ESPINAR',
+    texto: 'CENTRO DE INSPECCIONES TÉCNICAS VEHICULARES ESPINAR S.A.C., con RUC N° 20602194958, con domicilio legal en la calle Wiracocha N°100, distrito, provincia de Espinar y departamento del Cusco; debidamente representado por su Gerente General, Sr. Justo Pastor Sasari Quispe, identificado con el DNI 29697807; según poder inscrito en la Partida Electrónica N° 11109864 de la Zona Registral N°X – Sede Cusco, de la Oficina Registral de Espinar de la Superintendencia Nacional de Registros Públicos – SUNARP.',
+  },
+  'CHECK&GO': {
+    nombre: 'CHECK&GO',
+    texto: 'CHECK & GO S.A.C., con RUC N° 20520690094, con domicilio en Avenida El Parque, Asoc. de Vivienda La Planicie, distrito de San Juan de Lurigancho, provincia y departamento de Lima; debidamente representado por su Gerente MARIA TERESA CHOCARRO MARTINEZ Identificada con C.E. N° 001376147; cuyo poder obra inscrito en la Partida Electrónica N°12251656 de la Oficina Registral Lima Zona Registral N° IX – Sede Lima, de la Superintendencia Nacional de los Registros Públicos – SUNARP.',
+  },
+  'EMG': {
+    nombre: 'EMG',
+    texto: 'EMG DEL PERÚ S.A.C., con RUC N° 20608373293, con domicilio en Calle Ramón Castilla s/n, distrito de Sapallanga, provincia de Huancayo, departamento de Junín; debidamente representada por su Gerente General EDWIN DE LA CRUZ SALHUA, identificado con DNI N° 09597947, según nombramiento y facultades inscrita en la Partida Electrónica N° 11302016 del registro de Personas Jurídicas de la Zona Registral N° VIII – Sede Huancayo de la Superintendencia Nacional de los Registros Públicos – SUNARP.',
+  },
+  'GFG': {
+    nombre: 'GFG',
+    texto: 'FG LOGÍSTICA INTEGRAL VIA PERU S.A.C., con RUC N° 20613984900, con domicilio legal en Av. Santa Rosa Sub Lote 1-D Remanente– Fundo Tinajeras, Distrito De San Juan Bautista, Provincia De Huamanga Y Departamento De Ayacucho; debidamente representado por MARLENY EVANAN ORTIZ, identificado con D.N.I. N° 48618681; según poder inscrito en la Partida Electrónica N° 11189852 del registro de poderes de la Oficina Registral de Ayacucho de la Zona Registral N° XIV–Sede Ayacucho.',
+  },
+  'LIDERSUR ILAVE': {
+    nombre: 'LIDERSUR ILAVE',
+    texto: 'LIDER-SUR SERVICIOS MULTIPLES EIRL, con RUC N°20448179690, representado legalmente por Brenda Mariel Ojeda Manrique, identificada con D.N.I. N° 47776232, con poder inscrito en Partida Electrónica N°11091017 de la Oficina Registral Puno de la Zona Registral N° XIII, de la Superintendencia Nacional de los Registros Públicos – SUNARP, y autorizado mediante Resolución Directoral N° 010-2022-MTC/17.03, para operar como Centro de Inspección Técnica Vehicular Fijo con una (01) Línea de Inspección Técnica Vehicular Tipo Combinada, en el local ubicado en Avenida Panamericana Norte N° 487, distrito de Ilave, provincia de El Collao, departamento de Puno.',
+  },
+  'LIDERSUR LIMA': {
+    nombre: 'LIDERSUR LIMA',
+    texto: 'GRUPO LIDER SUR SERVICIOS MÚLTIPLES E.I.R.L. con RUC N° 20448179690, con domicilio en Av. Gerardo Unger N°3617, distrito de Independencia, provincia y departamento de Lima, debidamente representado por Brenda Mariel Ojeda Manrique, identificada con DNI N°47776232; cuyo poder obra inscrito en la Partida Electrónica N°11091017 de la Superintendencia Nacional de Registros Públicos-SUNARP, y autorizado mediante Resolución Directoral N° 010-2022-MTC/17.03, para operar como Centro de Inspección Técnica Vehicular Fijo con una (01) Línea de Inspección Técnica Vehicular Tipo Combinada.',
+  },
+  'LIDERSUR PUNO': {
+    nombre: 'LIDERSUR PUNO',
+    texto: 'GRUPO LIDER SUR REVISIONES TÉCNICAS E.I.R.L. con RUC N° 20609575230, con domicilio en Jr. Prolongación Arboleda Mz. Ñ, Lote 6 y 7 del Centro Poblado Salcedo, Parque Industrial de Puno, provincia y departamento de Puno, debidamente representado por Aimar Silva Vela, identificado con DNI N°78015846; cuyo poder obra inscrito en la Partida Electrónica N°11183337 de la Superintendencia Nacional de Registros Públicos-SUNARP.',
+  },
+  'LIDERSUR PUERTO': {
+    nombre: 'LIDERSUR PUERTO',
+    texto: 'GRUPO LIDER SUR REVISIONES TECNICAS E.I.R.L., con RUC N° 20609575230, debidamente representado por AIMAR SILVA VELA, identificado con DNI N°78015846; autorizado para operar mediante Resolución Directoral N° 379-2023-MTC/17.03, en Av. Andres Avelino Caceres Km. 6.5 La Pastora, Distrito Tambopata, Provincia Tambopata, Departamento de Madre de Dios.',
+  },
+  'FEDY': {
+    nombre: 'FEDY',
+    texto: 'REVISION TECNICA VEHICULAR GRUPO FEDY S.A.C., con RUC N° 20612501051, con domicilio legal en Av. Milton Cordova La Torre, distrito de Huanta, provincia de Huanta y departamento de Ayacucho; debidamente representado por su Gerente General, Sr. ELMER LOPEZ ROMAN, identificado con el DNI N° 42362480; según nombramiento y facultades inscritas en la Partida Electrónica N° 11182721 del registro de Personas Jurídicas de la Superintendencia Nacional de los Registros Públicos - SUNARP.',
+  },
+  'AUTOREAL': {
+    nombre: 'AUTOREAL',
+    texto: 'CENTRO DE INSPECCIÓN TÉCNICA VEHICULAR SERVICIOS GENERALES AUTO REAL E.I.R.L., con RUC N° 20565549392, debidamente representado por NORMA MARGARITA BAUTISTA POMA Identificada con DNI N° 09587028 y que, mediante Resolución Directoral N° 072-2022-MTC/17.03 de fecha 11 de febrero de 2022, se obtuvo autorización para operar como Centro de Inspección Técnica Vehicular Tipo Mixta en Mz. A Sub Lt 1 D Sector Equipamiento, distrito de Ventanilla, provincia Constitucional del Callao.',
+  },
+};
+
 const ALLOWED_PROGRESO = ['NO INICIADO', 'AGENDAR', 'EN REVISIÓN', 'PRESENTADO'];
 const PROGRESO_LABELS  = {
   'NO INICIADO': 'No iniciado',
@@ -23,7 +71,7 @@ const PROGRESO_CSS = {
 
 const state = {
   apiUrl:  '',
-  view:    'pending',       // 'pending' | 'all'
+  view:    'all',           // 'pending' | 'all'
   items:   [],
   filtered: [],
   templates: [],
@@ -48,6 +96,20 @@ function clearApiUrlAndReload(){ try { localStorage.removeItem(STORAGE_KEY); } c
 function isValidApiUrl(url)    { return typeof url === 'string' && url.startsWith(API_URL_PREFIX); }
 
 /* ──────────────────────────── API ─────────────────────────────── */
+
+async function apiPost(action, body = {}) {
+  if (!state.apiUrl) throw new Error('API_URL no configurada.');
+  const resp = await fetch(state.apiUrl, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ action, ...body }),
+    redirect: 'follow',
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const data = await resp.json();
+  if (data.error) throw new Error(data.message || data.error);
+  return data;
+}
 
 async function api(action, params = {}) {
   if (!state.apiUrl) throw new Error('API_URL no configurada.');
@@ -87,7 +149,10 @@ async function loadAll() {
       api('list', { limit: 500 }),
     ]);
     renderMetrics(summary);
-    state.items = list.items || [];
+    const apiItems    = list.items || [];
+    const manualItems = loadManualTasks();
+    const apiIds      = new Set(apiItems.map(i => i.id));
+    state.items = [...manualItems.filter(m => !apiIds.has(m.id)), ...apiItems];
     populateEmpresaFilter(state.items);
     applyFilters();
 
@@ -140,9 +205,381 @@ function switchView(viewId) {
     el.style.opacity = viewId === 'all' ? '1' : '0.4';
     el.style.pointerEvents = viewId === 'all' ? '' : 'none';
   });
+  const filtersBar = document.getElementById('filters-bar');
+  if (filtersBar) filtersBar.classList.toggle('hidden', viewId === 'empresas');
   document.getElementById('view-pending').classList.toggle('hidden', viewId !== 'pending');
   document.getElementById('view-all').classList.toggle('hidden', viewId !== 'all');
-  applyFilters();
+  document.getElementById('view-empresas').classList.toggle('hidden', viewId !== 'empresas');
+  if (viewId === 'empresas') renderEmpresasView();
+  else applyFilters();
+}
+
+/* ══════════════════════════════════════════════════════════════
+   GESTIÓN DE EMPRESAS
+   ══════════════════════════════════════════════════════════════ */
+
+const DOCS_TEMPLATE = () => ({
+  certificado_vigencia:    { nombre: 'Certificado de vigencia',           url: '', fecha: '' },
+  acreditacion_supervisor: { nombre: 'Acreditación de supervisor',        url: '', fecha: '' },
+  acreditacion_suplente:   { nombre: 'Acreditación de suplente',          url: '', fecha: '' },
+  acreditacion_tecnico_1:  { nombre: 'Acreditación técnico 1',            url: '', fecha: '' },
+  acreditacion_tecnico_2:  { nombre: 'Acreditación técnico 2',            url: '', fecha: '' },
+  acreditacion_tecnico_3:  { nombre: 'Acreditación técnico 3',            url: '', fecha: '' },
+  calibracion_semestral:   { nombre: 'Calibración semestral (6 meses)',   url: '', fecha: '' },
+  calibracion_anual:       { nombre: 'Calibración anual',                 url: '', fecha: '' },
+  poliza_seguros:          { nombre: 'Póliza de seguros',                 url: '', fecha: '' },
+  dni_representante:       { nombre: 'DNI del representante legal',       url: '', fecha: '' },
+  firma_representante:     { nombre: 'Firma del representante legal',     url: '', fecha: '' },
+});
+
+function loadEmpresasFromStorage() {
+  try {
+    const raw = localStorage.getItem('mtc_empresas');
+    if (raw) return JSON.parse(raw);
+  } catch (_) {}
+  // Seed inicial desde EMPRESAS_LEGALES
+  const seed = {};
+  Object.entries(EMPRESAS_LEGALES).forEach(([key, e]) => {
+    seed[key] = {
+      key,
+      nombre:      e.nombre,
+      descripcion: e.texto,
+      ruc:         extractRuc(e.texto),
+      sede:        '',
+      activo:      true,
+      auth_method: 'clave_sol',
+      sol_usuario: '', sol_clave: '',
+      dni_representante: '', password_casilla: '',
+      documentos: DOCS_TEMPLATE(),
+    };
+  });
+  saveEmpresasToStorage(seed);
+  return seed;
+}
+
+function extractRuc(texto) {
+  const m = texto.match(/RUC\s*N[°º]?\s*([\d]{11})/);
+  return m ? m[1] : '';
+}
+
+function saveEmpresasToStorage(data) {
+  localStorage.setItem('mtc_empresas', JSON.stringify(data));
+}
+
+function renderEmpresasView() {
+  const empresas = loadEmpresasFromStorage();
+  const list     = document.getElementById('empresas-list');
+  if (!list) return;
+  const keys = Object.keys(empresas);
+  if (keys.length === 0) {
+    list.innerHTML = '<p class="muted" style="padding:2rem">No hay empresas. Agregá la primera con el botón ➕.</p>';
+    return;
+  }
+  list.innerHTML = keys.map(k => renderEmpresaCard(empresas[k])).join('');
+  // Bind accordion toggles
+  list.querySelectorAll('.empresa-card-header').forEach(h => {
+    h.addEventListener('click', () => {
+      const card = h.closest('.empresa-card');
+      card.classList.toggle('open');
+    });
+  });
+  // Bind description save
+  list.querySelectorAll('.btn-save-desc').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key  = btn.dataset.key;
+      const val  = document.getElementById(`desc-${key}`).value;
+      const data = loadEmpresasFromStorage();
+      data[key].descripcion = val;
+      saveEmpresasToStorage(data);
+      showToast('Descripción guardada', 'ok');
+    });
+  });
+  // Bind: toggle link row
+  list.querySelectorAll('.btn-link-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const row = document.getElementById(`dlink-${btn.dataset.key}-${btn.dataset.doc}`);
+      if (row) row.classList.toggle('hidden');
+    });
+  });
+
+  // Bind: save URL from link row
+  list.querySelectorAll('.btn-save-doc-url').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const { key, doc } = btn.dataset;
+      const row       = document.getElementById(`dlink-${key}-${doc}`);
+      const urlInput  = row?.querySelector('.doc-url-inline');
+      const dateInput = row?.querySelector('.doc-date-inline');
+      const data = loadEmpresasFromStorage();
+      data[key].documentos[doc].url   = urlInput?.value.trim() || '';
+      data[key].documentos[doc].fecha = dateInput?.value || '';
+      saveEmpresasToStorage(data);
+      showToast('Link guardado', 'ok');
+      renderEmpresasView();
+    });
+  });
+
+  // Bind: file upload
+  list.querySelectorAll('.doc-file-input').forEach(input => {
+    input.addEventListener('change', async function () {
+      const file = this.files[0];
+      if (!file) return;
+      const { key, doc, nombre } = this.dataset;
+      await handleDocUpload(key, doc, nombre, file);
+    });
+  });
+
+  // Bind: preview PDF
+  list.querySelectorAll('.btn-preview-doc').forEach(btn => {
+    btn.addEventListener('click', () => openPdfPreview(btn.dataset.preview, btn.dataset.nombre));
+  });
+  // Bind edit empresa
+  list.querySelectorAll('.btn-edit-empresa').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      openEmpresaModal(btn.dataset.key);
+    });
+  });
+  // Bind delete empresa
+  list.querySelectorAll('.btn-delete-empresa').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      if (!confirm(`¿Eliminar la empresa "${btn.dataset.key}"?`)) return;
+      const data = loadEmpresasFromStorage();
+      delete data[btn.dataset.key];
+      saveEmpresasToStorage(data);
+      renderEmpresasView();
+    });
+  });
+}
+
+function extractDriveFileId(url) {
+  if (!url) return null;
+  const m = url.match(/\/d\/([a-zA-Z0-9_-]{25,})/);
+  return m ? m[1] : null;
+}
+
+function renderDocCard(key, docKey, doc) {
+  const hasUrl     = !!doc.url;
+  const fileId     = extractDriveFileId(doc.url);
+  const previewUrl = fileId ? `https://drive.google.com/file/d/${fileId}/preview` : '';
+  const eKey = escapeHtml(key);
+  const eDk  = escapeHtml(docKey);
+  return `
+    <div class="doc-card" id="dcard-${eKey}-${eDk}">
+      <div class="doc-card-main">
+        <div class="doc-card-info">
+          <span class="doc-card-icon">${hasUrl ? '📄' : '📋'}</span>
+          <div>
+            <span class="doc-card-name">${escapeHtml(doc.nombre)}</span>
+            ${doc.fecha ? `<span class="doc-card-date">⏰ Vence: ${escapeHtml(doc.fecha)}</span>` : '<span class="doc-card-date doc-sin-vence">Sin fecha de vencimiento</span>'}
+          </div>
+        </div>
+        <div class="doc-card-right">
+          <span class="doc-badge ${hasUrl ? 'badge-doc-ok' : 'badge-doc-pending'}">${hasUrl ? '✅ Subido' : '⏳ Pendiente'}</span>
+          <div class="doc-card-btns">
+            ${previewUrl ? `<button class="btn-doc-action btn-preview-doc" data-preview="${escapeHtml(previewUrl)}" data-nombre="${escapeHtml(doc.nombre)}">👁 Ver</button>` : ''}
+            <label class="btn-doc-action btn-upload-label">
+              ${hasUrl ? '🔄 Actualizar' : '📎 Subir PDF'}
+              <input type="file" class="file-input-hidden doc-file-input" accept="application/pdf"
+                data-key="${eKey}" data-doc="${eDk}" data-nombre="${escapeHtml(doc.nombre)}">
+            </label>
+            <button class="btn-doc-action btn-link-toggle" data-key="${eKey}" data-doc="${eDk}" title="Pegar link">🔗</button>
+          </div>
+        </div>
+      </div>
+      <div class="doc-link-row hidden" id="dlink-${eKey}-${eDk}">
+        <input type="url" class="doc-url-inline" placeholder="https://drive.google.com/file/d/..." value="${escapeHtml(doc.url || '')}">
+        <input type="date" class="doc-date-inline" value="${escapeHtml(doc.fecha || '')}" title="Fecha de vencimiento del documento" placeholder="Vencimiento">
+        <button class="btn-doc-action btn-save-doc-url" data-key="${eKey}" data-doc="${eDk}">💾 Guardar</button>
+      </div>
+      <div class="doc-upload-progress hidden" id="dprog-${eKey}-${eDk}">
+        <span class="spinner-inline"></span> Subiendo a Drive...
+      </div>
+    </div>`;
+}
+
+function renderEmpresaCard(e) {
+  const docsHtml = Object.entries(e.documentos).map(([docKey, doc]) =>
+    renderDocCard(e.key, docKey, doc)
+  ).join('');
+
+  const authBadge = e.auth_method === 'direct'
+    ? '<span class="badge-auth badge-direct">Directo</span>'
+    : '<span class="badge-auth badge-sol">Clave SOL</span>';
+
+  const docsOk      = Object.values(e.documentos).filter(d => d.url).length;
+  const docsTotal   = Object.keys(e.documentos).length;
+  const docProgress = `${docsOk}/${docsTotal} docs`;
+
+  return `
+    <div class="empresa-card" data-key="${escapeHtml(e.key)}">
+      <div class="empresa-card-header">
+        <div class="empresa-card-left">
+          <span class="empresa-activo-dot ${e.activo ? 'dot-on' : 'dot-off'}"></span>
+          <div>
+            <strong class="empresa-card-name">${escapeHtml(e.nombre)}</strong>
+            <span class="empresa-card-meta">RUC ${escapeHtml(e.ruc || '—')} · ${authBadge} · ${docProgress}</span>
+          </div>
+        </div>
+        <div class="empresa-card-actions">
+          <button class="btn-edit-empresa btn-icon" data-key="${escapeHtml(e.key)}" title="Editar empresa">✏️</button>
+          <button class="btn-delete-empresa btn-icon" data-key="${escapeHtml(e.key)}" title="Eliminar">🗑</button>
+          <span class="empresa-chevron">▸</span>
+        </div>
+      </div>
+      <div class="empresa-card-body">
+        <div class="empresa-body-grid">
+          <div class="empresa-body-left">
+            <label class="form-label">Descripción / personería jurídica</label>
+            <textarea id="desc-${escapeHtml(e.key)}" class="response-textarea empresa-desc-textarea" rows="6">${escapeHtml(e.descripcion || '')}</textarea>
+            <button class="btn-secondary btn-save-desc" data-key="${escapeHtml(e.key)}" style="margin-top:0.5rem">💾 Guardar descripción</button>
+          </div>
+          <div class="empresa-body-right">
+            <label class="form-label">Documentación requerida</label>
+            <div class="docs-list">${docsHtml}</div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function openEmpresaModal(key) {
+  const data    = key ? loadEmpresasFromStorage()[key] : null;
+  const modal   = document.getElementById('modal-empresa');
+  const title   = document.getElementById('modal-empresa-title');
+  title.textContent = key ? `Editar — ${key}` : 'Nueva Empresa';
+
+  document.getElementById('fe-key').value         = key || '';
+  document.getElementById('fe-key').disabled      = !!key;
+  document.getElementById('fe-ruc').value         = data?.ruc || '';
+  document.getElementById('fe-nombre').value      = data?.nombre || '';
+  document.getElementById('fe-descripcion').value = data?.descripcion || '';
+  document.getElementById('fe-sede').value        = data?.sede || '';
+  document.getElementById('fe-activo').checked    = data ? data.activo : true;
+  document.getElementById('fe-auth').value        = data?.auth_method || 'clave_sol';
+  document.getElementById('fe-sol-user').value    = data?.sol_usuario || '';
+  document.getElementById('fe-sol-clave').value   = data?.sol_clave || '';
+  document.getElementById('fe-dni').value         = data?.dni_representante || '';
+  document.getElementById('fe-pass').value        = data?.password_casilla || '';
+
+  toggleCredsSection(document.getElementById('fe-auth').value);
+  modal.classList.remove('hidden');
+}
+
+function toggleCredsSection(method) {
+  document.getElementById('fe-creds-direct').classList.toggle('hidden', method !== 'direct');
+  document.getElementById('fe-creds-sol').classList.toggle('hidden', method !== 'clave_sol');
+}
+
+async function handleDocUpload(empresaKey, docKey, docNombre, file) {
+  const MAX_MB = 25;
+  if (file.size > MAX_MB * 1024 * 1024) {
+    showToast(`El PDF supera ${MAX_MB}MB`, 'warn');
+    return;
+  }
+  const progressEl = document.getElementById(`dprog-${empresaKey}-${docKey}`);
+  if (progressEl) progressEl.classList.remove('hidden');
+
+  try {
+    const base64 = await new Promise((res, rej) => {
+      const reader = new FileReader();
+      reader.onload  = ev => res(ev.target.result.split(',')[1]);
+      reader.onerror = () => rej(new Error('Error al leer el archivo'));
+      reader.readAsDataURL(file);
+    });
+
+    const fileName = `${empresaKey}_${docKey}.pdf`;
+    const result   = await apiPost('upload_empresa_doc', {
+      empresa_key: empresaKey,
+      doc_key:     docKey,
+      file_base64: base64,
+      file_name:   fileName,
+    });
+
+    const data = loadEmpresasFromStorage();
+    data[empresaKey].documentos[docKey].url   = result.view_url;
+    data[empresaKey].documentos[docKey].fecha = new Date().toISOString().slice(0, 10);
+    saveEmpresasToStorage(data);
+    showToast(`${docNombre} subido correctamente ✅`, 'ok');
+    renderEmpresasView();
+    // Reabrir el acordeón
+    setTimeout(() => {
+      const card = document.querySelector(`.empresa-card[data-key="${empresaKey}"]`);
+      if (card && !card.classList.contains('open')) card.classList.add('open');
+    }, 100);
+  } catch (err) {
+    showToast('Error al subir: ' + err.message, 'error');
+    if (progressEl) progressEl.classList.add('hidden');
+  }
+}
+
+function openPdfPreview(previewUrl, nombre) {
+  const modal  = document.getElementById('modal-pdf-preview');
+  const frame  = document.getElementById('pdf-preview-frame');
+  const title  = document.getElementById('modal-pdf-title');
+  if (!modal || !frame) return;
+  title.textContent = nombre || 'Documento';
+  frame.src = previewUrl;
+  modal.classList.remove('hidden');
+}
+
+function bindEmpresasEvents() {
+  // PDF preview close
+  document.getElementById('btn-cerrar-pdf-preview').addEventListener('click', () => {
+    document.getElementById('modal-pdf-preview').classList.add('hidden');
+    document.getElementById('pdf-preview-frame').src = '';
+  });
+  document.getElementById('modal-pdf-preview').addEventListener('click', function (e) {
+    if (e.target === this) {
+      this.classList.add('hidden');
+      document.getElementById('pdf-preview-frame').src = '';
+    }
+  });
+
+  document.getElementById('btn-nueva-empresa').addEventListener('click', () => openEmpresaModal(null));
+  document.getElementById('btn-cerrar-empresa').addEventListener('click', () =>
+    document.getElementById('modal-empresa').classList.add('hidden'));
+  document.getElementById('btn-cancelar-empresa').addEventListener('click', () =>
+    document.getElementById('modal-empresa').classList.add('hidden'));
+
+  document.getElementById('fe-auth').addEventListener('change', function () {
+    toggleCredsSection(this.value);
+  });
+
+  document.getElementById('form-empresa').addEventListener('submit', e => {
+    e.preventDefault();
+    const key = document.getElementById('fe-key').value.trim().toUpperCase();
+    if (!key) return showToast('El nombre clave es obligatorio', 'warn');
+    const data = loadEmpresasFromStorage();
+    const existing = data[key] || {};
+    data[key] = {
+      key,
+      nombre:           document.getElementById('fe-nombre').value.trim(),
+      ruc:              document.getElementById('fe-ruc').value.trim(),
+      descripcion:      document.getElementById('fe-descripcion').value.trim(),
+      sede:             document.getElementById('fe-sede').value.trim(),
+      activo:           document.getElementById('fe-activo').checked,
+      auth_method:      document.getElementById('fe-auth').value,
+      sol_usuario:      document.getElementById('fe-sol-user').value.trim(),
+      sol_clave:        document.getElementById('fe-sol-clave').value,
+      dni_representante: document.getElementById('fe-dni').value.trim(),
+      password_casilla:  document.getElementById('fe-pass').value,
+      documentos:       existing.documentos || DOCS_TEMPLATE(),
+    };
+    saveEmpresasToStorage(data);
+    document.getElementById('modal-empresa').classList.add('hidden');
+    showToast(`Empresa "${key}" guardada`, 'ok');
+    renderEmpresasView();
+    // Actualizar selector de empresa en el panel de respuesta
+    refreshEmpresasLegales(data);
+  });
+}
+
+function refreshEmpresasLegales(data) {
+  // Mantener EMPRESAS_LEGALES sincronizado con el storage
+  Object.entries(data).forEach(([key, e]) => {
+    EMPRESAS_LEGALES[key] = { nombre: e.nombre, texto: e.descripcion };
+  });
 }
 
 /* ──────────────────────────── Filtros ─────────────────────────── */
@@ -164,9 +601,13 @@ function applyFilters() {
   if (f.empresa) data = data.filter(i => i.empresa === f.empresa);
 
   if (state.view === 'all') {
-    if (f.progreso) data = data.filter(i => i.progreso === f.progreso);
+    if (f.progreso === 'ACTIVAS') {
+      data = data.filter(i => i.progreso !== 'PRESENTADO' && i.progreso !== 'archivada');
+    } else if (f.progreso) {
+      data = data.filter(i => i.progreso === f.progreso);
+    }
     if (f.soloPendientes) {
-      data = data.filter(i => i.progreso === 'NO INICIADO' || i.progreso === 'AGENDAR');
+      data = data.filter(i => i.progreso !== 'PRESENTADO');
     }
   }
 
@@ -760,11 +1201,22 @@ function renderResponsePanel(notifId, detail) {
     .map(t => `<option value="${escapeHtml(t.id)}"${t.id === suggestedTpl ? ' selected' : ''}>${escapeHtml(t.nombre)}${t.tipo_notificacion ? ' — ' + escapeHtml(t.tipo_notificacion) : ''}</option>`)
     .join('');
   const ciudadDefault = escapeHtml(detail.sede || 'Lima');
+  const empresaOptions = Object.keys(EMPRESAS_LEGALES)
+    .map(k => `<option value="${escapeHtml(k)}">${escapeHtml(EMPRESAS_LEGALES[k].nombre)}</option>`)
+    .join('');
   return `
     <div class="response-panel">
       <div class="response-context">
         <strong>${escapeHtml(detail.documento || '—')}</strong>
         <p class="muted small" style="margin:0.2rem 0 0">${escapeHtml(detail.asunto || '')}</p>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Empresa que representa (personería jurídica)</label>
+        <select id="resp-empresa" class="response-select">
+          <option value="">— Seleccioná la empresa —</option>
+          ${empresaOptions}
+        </select>
+        <div id="resp-empresa-preview" class="empresa-preview hidden"></div>
       </div>
       <div class="form-group">
         <label class="form-label">Plantilla de respuesta</label>
@@ -804,12 +1256,27 @@ function renderResponsePanel(notifId, detail) {
 }
 
 function bindResponsePanelEvents(notifId, detail) {
+  // Mostrar preview del texto legal al seleccionar empresa
+  document.getElementById('resp-empresa').addEventListener('change', function () {
+    const preview = document.getElementById('resp-empresa-preview');
+    const empresa = EMPRESAS_LEGALES[this.value];
+    if (empresa) {
+      preview.textContent = empresa.texto;
+      preview.classList.remove('hidden');
+    } else {
+      preview.classList.add('hidden');
+    }
+  });
+
   document.getElementById('btn-generate').addEventListener('click', async () => {
     const templateId    = document.getElementById('resp-template').value;
+    const empresaKey    = document.getElementById('resp-empresa').value;
     const justificacion = document.getElementById('resp-justification').value.trim();
     const ciudad        = (document.getElementById('resp-ciudad')?.value || '').trim() || detail.sede || 'Lima';
-    if (!templateId) { showToast('Seleccioná una plantilla primero', 'warn'); return; }
-    await handleGenerateResponse(notifId, templateId, justificacion, ciudad);
+    if (!empresaKey)   { showToast('Seleccioná la empresa primero', 'warn'); return; }
+    if (!templateId)   { showToast('Seleccioná una plantilla primero', 'warn'); return; }
+    const empresaTexto = EMPRESAS_LEGALES[empresaKey]?.texto || '';
+    await handleGenerateResponse(notifId, templateId, justificacion, ciudad, empresaTexto);
   });
   const btnDownload = document.getElementById('btn-download-word');
   if (btnDownload) {
@@ -828,7 +1295,7 @@ function bindResponsePanelEvents(notifId, detail) {
   }
 }
 
-async function handleGenerateResponse(notifId, templateId, justificacion, ciudad) {
+async function handleGenerateResponse(notifId, templateId, justificacion, ciudad, empresaTexto) {
   const genBtn  = document.getElementById('btn-generate');
   const spinner = document.getElementById('response-generating');
   const output  = document.getElementById('response-output');
@@ -844,6 +1311,7 @@ async function handleGenerateResponse(notifId, templateId, justificacion, ciudad
       template_id:     templateId,
       justificacion,
       ciudad:          ciudad || 'Lima',
+      empresa_texto:   empresaTexto || '',
     });
     document.getElementById('resp-preview').innerText = result.respuesta || '(Sin respuesta generada)';
     output.classList.remove('hidden');
@@ -1075,6 +1543,91 @@ function handleSaveUrl(e) {
   loadAll();
 }
 
+/* ──────────────────────────── Tareas manuales ─────────────────── */
+
+const MANUAL_TASKS_KEY = 'mtc_tareas_manuales';
+
+function loadManualTasks() {
+  try { return JSON.parse(localStorage.getItem(MANUAL_TASKS_KEY) || '[]'); } catch { return []; }
+}
+
+function saveManualTask(item) {
+  const tasks = loadManualTasks();
+  tasks.push(item);
+  localStorage.setItem(MANUAL_TASKS_KEY, JSON.stringify(tasks));
+}
+
+function calcDiasRestantes(plazoStr) {
+  if (!plazoStr) return '';
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const plazo = new Date(plazoStr); plazo.setHours(0, 0, 0, 0);
+  if (isNaN(plazo)) return '';
+  return String(Math.round((plazo - today) / 86400000));
+}
+
+function bindNuevaTareaEvents() {
+  const modal     = document.getElementById('modal-nueva-tarea');
+  const btnAbrir  = document.getElementById('btn-nueva-tarea');
+  const btnCerrar = document.getElementById('btn-cerrar-nueva-tarea');
+  const btnCancel = document.getElementById('btn-cancelar-nueva-tarea');
+  const form      = document.getElementById('form-nueva-tarea');
+
+  function openModal() {
+    // Populate empresa select
+    const sel     = document.getElementById('nt-empresa');
+    const empresas = loadEmpresasFromStorage();
+    sel.innerHTML = '<option value="">— Seleccioná la empresa —</option>' +
+      Object.values(empresas)
+        .map(e => `<option value="${escapeHtml(e.nombre)}">${escapeHtml(e.nombre)}</option>`)
+        .join('');
+    // Default fecha to today
+    const fechaInput = document.getElementById('nt-fecha');
+    if (!fechaInput.value) fechaInput.value = new Date().toISOString().slice(0, 10);
+    modal.classList.remove('hidden');
+  }
+
+  function closeModal() {
+    modal.classList.add('hidden');
+    form.reset();
+  }
+
+  btnAbrir?.addEventListener('click', openModal);
+  btnCerrar?.addEventListener('click', closeModal);
+  btnCancel?.addEventListener('click', closeModal);
+  modal?.addEventListener('click', e => { if (e.target === modal) closeModal(); });
+
+  form?.addEventListener('submit', e => {
+    e.preventDefault();
+    const empresaNombre = document.getElementById('nt-empresa').value;
+    if (!empresaNombre) { showToast('Seleccioná la empresa', 'warn'); return; }
+    const documento = document.getElementById('nt-documento').value.trim();
+    if (!documento)  { showToast('El título es obligatorio', 'warn'); return; }
+
+    const plazo = document.getElementById('nt-plazo').value;
+    const item  = {
+      id:                 'manual-' + Date.now(),
+      empresa:            empresaNombre,
+      documento,
+      asunto:             document.getElementById('nt-asunto').value.trim(),
+      fecha_notificacion: document.getElementById('nt-fecha').value,
+      plazo_vencimiento:  plazo,
+      dias_restantes:     calcDiasRestantes(plazo),
+      plazo_vencido:      plazo ? new Date(plazo) < new Date() : false,
+      progreso:           document.getElementById('nt-progreso').value,
+      tarea:              document.getElementById('nt-tarea').value.trim(),
+      sede:               '',
+      origen:             'manual',
+      ruc:                '',
+    };
+
+    saveManualTask(item);
+    state.items.unshift(item);
+    applyFilters();
+    closeModal();
+    showToast(`Tarea "${documento}" agregada`, 'ok');
+  });
+}
+
 /* ──────────────────────────── Init ────────────────────────────── */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1143,6 +1696,12 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-error-change-url').addEventListener('click', clearApiUrlAndReload);
   document.getElementById('btn-error-retry').addEventListener('click', loadAll);
 
+  // Empresas
+  bindEmpresasEvents();
+
+  // Tareas manuales
+  bindNuevaTareaEvents();
+
   // Initial view state
-  switchView('pending');
+  switchView('all');
 });

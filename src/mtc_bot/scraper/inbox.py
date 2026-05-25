@@ -201,7 +201,12 @@ async def _read_items_in_current_page(
         has_adjunto = await item_loc.locator(SEL_ICONO_ADJUNTO).count() > 0
         fecha_parsed = _parse_fecha_dmy(raw_fecha)
         if fecha_parsed is None:
-            logger.debug("Fecha no parseada: %r (item %d pág %d)", raw_fecha, i, page_index)
+            logger.warning(
+                "FECHA NO PARSEADA: %r (item %d pág %d asunto=%r) "
+                "— el item será descartado con cualquier --since. "
+                "Revisar _parse_fecha_dmy si este formato es nuevo.",
+                raw_fecha, i, page_index, asunto[:50],
+            )
         fecha = fecha_parsed or date.min  # date.min = año 1 → nunca pasa filtro since=today
         logger.debug(
             "Item %d pág %d: raw_fecha=%r → %s | %s", i, page_index, raw_fecha, fecha, asunto[:40]
@@ -261,14 +266,29 @@ async def list_inbox(
         logger.info("Inbox paginator: %d–%d of %d", *pag)
 
     all_items: list[InboxItem] = []
+    seen_ids: set[str] = set()
     page_index = 1
     while page_index <= max_pages:
         page_items = await _read_items_in_current_page(page, ruc, page_index)
         for it in page_items:
             if since and it.fecha < since:
+                if it.fecha == date.min:
+                    logger.warning(
+                        "Item DESCARTADO por fecha no parseada (raw=%r, asunto=%r, pág %d) "
+                        "— puede ser una notificación real que se está perdiendo.",
+                        it.raw_fecha, it.asunto[:50], it.page_index,
+                    )
+                else:
+                    logger.debug(
+                        "Filtro since: %s < %s — %s", it.fecha, since, it.asunto[:40]
+                    )
                 continue
             if until and it.fecha > until:
                 continue
+            if it.notification_id in seen_ids:
+                logger.debug("Dedup inbox: %s ya visto (pág %d)", it.notification_id, page_index)
+                continue
+            seen_ids.add(it.notification_id)
             all_items.append(it)
             if limit and len(all_items) >= limit:
                 logger.info("Límite de %d items alcanzado", limit)

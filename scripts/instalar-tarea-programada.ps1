@@ -50,7 +50,8 @@ $Settings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit (New-TimeSpan -Hours 2) `
     -StartWhenAvailable `
     -DontStopIfGoingOnBatteries `
-    -RunOnlyIfNetworkAvailable
+    -RunOnlyIfNetworkAvailable `
+    -MultipleInstances IgnoreNew
 
 # Principal: usuario actual, nivel más alto si es admin
 $Principal = New-ScheduledTaskPrincipal `

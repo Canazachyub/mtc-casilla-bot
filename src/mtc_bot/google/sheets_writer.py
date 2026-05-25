@@ -246,13 +246,20 @@ def update_notificacion_fields(
         col_letter = gspread.utils.rowcol_to_a1(1, col_idx)[:-1]  # strip the "1"
         updates.append({"range": f"{col_letter}{row_idx}", "values": [[cell_value]]})
 
-    if updates:
-        ws.batch_update(updates, value_input_option="USER_ENTERED")
-        logger.info(
-            "Sheet update OK: id=%s fields=[%s]",
+    if not updates:
+        logger.warning(
+            "Ningún campo válido para actualizar (id=%s). "
+            "Verificá que las columnas existen en el Sheet.",
             notification_id,
-            ", ".join(fields.keys()),
         )
+        return False
+
+    ws.batch_update(updates, value_input_option="USER_ENTERED")
+    logger.info(
+        "Sheet update OK: id=%s fields=[%s]",
+        notification_id,
+        ", ".join(f for f in fields if f in headers),
+    )
     return True
 
 

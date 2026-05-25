@@ -733,6 +733,16 @@ tbody tr.row-alerta:hover { background: rgba(245,158,11,0.06); }
   width: 100%;
 }
 .response-select:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(59,130,246,0.15); }
+.empresa-preview {
+  margin-top: 0.4rem;
+  padding: 0.6rem 0.8rem;
+  background: rgba(59,130,246,0.07);
+  border-left: 3px solid var(--primary);
+  border-radius: 0 6px 6px 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
 .response-textarea {
   background: var(--bg);
   color: var(--text);
@@ -983,3 +993,372 @@ footer {
   .re-row { grid-template-columns: 1fr; gap: 0.15rem; }
   .tarea-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ══════════════════════════════════════════════════════════════
+   VISTA EMPRESAS
+   ══════════════════════════════════════════════════════════════ */
+
+.empresas-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.2rem;
+}
+.empresas-title { font-size: 1.1rem; font-weight: 600; margin: 0; }
+.btn-add-empresa {
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  padding: 0.5rem 1.1rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  font-weight: 600;
+  transition: opacity .15s;
+}
+.btn-add-empresa:hover { opacity: 0.85; }
+
+.btn-add-tarea {
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  padding: 0.45rem 1rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+  font-weight: 600;
+  transition: opacity .15s;
+  white-space: nowrap;
+}
+.btn-add-tarea:hover { opacity: 0.85; }
+
+/* ── Accordion card ── */
+.empresa-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  margin-bottom: 0.75rem;
+  overflow: hidden;
+  transition: box-shadow .15s;
+}
+.empresa-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.18); }
+.empresa-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.9rem 1.2rem;
+  cursor: pointer;
+  user-select: none;
+  gap: 1rem;
+}
+.empresa-card-left { display: flex; align-items: center; gap: 0.9rem; }
+.empresa-card-name { font-size: 0.95rem; font-weight: 600; display: block; }
+.empresa-card-meta { font-size: 0.75rem; color: var(--text-muted); display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.15rem; }
+.empresa-card-actions { display: flex; align-items: center; gap: 0.5rem; }
+.btn-icon { background: none; border: none; cursor: pointer; font-size: 1rem; padding: 0.25rem; border-radius: 4px; }
+.btn-icon:hover { background: rgba(255,255,255,0.07); }
+.empresa-chevron { font-size: 0.85rem; color: var(--text-muted); transition: transform .2s; display: inline-block; }
+.empresa-card.open .empresa-chevron { transform: rotate(90deg); }
+.empresa-activo-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.dot-on  { background: #22c55e; }
+.dot-off { background: #6b7280; }
+
+/* ── Card body ── */
+.empresa-card-body { display: none; padding: 0 1.2rem 1.2rem; border-top: 1px solid var(--border); }
+.empresa-card.open .empresa-card-body { display: block; }
+.empresa-body-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-top: 1rem;
+}
+.empresa-desc-textarea { width: 100%; box-sizing: border-box; }
+
+/* ── Docs list ── */
+.docs-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.doc-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.6rem;
+  background: var(--bg);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.doc-status { font-size: 0.85rem; flex-shrink: 0; }
+.doc-name { font-size: 0.8rem; flex: 1; min-width: 120px; }
+.doc-actions { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; margin-left: auto; }
+.doc-url-input {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 0.72rem;
+  padding: 0.25rem 0.4rem;
+  width: 180px;
+}
+.doc-date-input {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 0.72rem;
+  padding: 0.25rem 0.4rem;
+  width: 120px;
+}
+.btn-doc-save {
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.btn-doc-view {
+  font-size: 0.72rem;
+  color: var(--primary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.doc-ok    { filter: none; }
+.doc-pending { opacity: 0.5; }
+
+/* ── Auth badges ── */
+.badge-auth {
+  font-size: 0.68rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.badge-direct { background: rgba(234,179,8,0.15); color: #ca8a04; }
+.badge-sol    { background: rgba(59,130,246,0.15); color: var(--primary); }
+
+/* ── Modal nueva empresa ── */
+.modal-empresa {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.65);
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+.modal-empresa.hidden { display: none; }
+.modal-empresa-content {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  width: 100%;
+  max-width: 680px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+.modal-empresa-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.1rem 1.4rem;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 1;
+}
+.modal-empresa-header h3 { margin: 0; font-size: 1rem; }
+.modal-empresa-close {
+  background: none; border: none; color: var(--text-muted);
+  font-size: 1.1rem; cursor: pointer; padding: 0.25rem;
+}
+.empresa-form { padding: 1.2rem 1.4rem; }
+.empresa-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.9rem;
+  margin-bottom: 0.9rem;
+}
+.full-width { grid-column: 1 / -1; }
+.creds-section {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.9rem 1rem;
+  margin-bottom: 0.9rem;
+}
+.creds-section-title { font-size: 0.82rem; font-weight: 600; margin: 0 0 0.7rem; color: var(--text-muted); }
+.empresa-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--border);
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.empresa-form-actions > div { display: flex; gap: 0.5rem; }
+
+@media (max-width: 768px) {
+  .empresa-body-grid { grid-template-columns: 1fr; }
+  .empresa-form-grid { grid-template-columns: 1fr; }
+  .doc-url-input { width: 120px; }
+}
+
+/* ── Doc cards rediseño ── */
+.docs-list { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.4rem; }
+
+.doc-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: border-color .15s;
+}
+.doc-card:hover { border-color: var(--primary); }
+
+.doc-card-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.55rem 0.75rem;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.doc-card-info {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex: 1;
+  min-width: 0;
+}
+.doc-card-icon { font-size: 1.1rem; flex-shrink: 0; }
+.doc-card-name { font-size: 0.8rem; font-weight: 500; display: block; }
+.doc-card-date { font-size: 0.7rem; color: var(--text-muted); display: block; margin-top: 0.1rem; }
+
+.doc-card-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.doc-badge {
+  font-size: 0.68rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.badge-doc-ok      { background: rgba(34,197,94,0.15); color: #22c55e; }
+.badge-doc-pending { background: rgba(100,116,139,0.15); color: var(--text-muted); }
+
+.doc-card-btns { display: flex; align-items: center; gap: 0.3rem; flex-wrap: wrap; }
+
+.btn-doc-action {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.28rem 0.65rem;
+  font-size: 0.72rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .12s;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.btn-doc-action:hover { background: var(--border); }
+.btn-upload-label { cursor: pointer; }
+.file-input-hidden { display: none; }
+
+/* link row */
+.doc-link-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.75rem;
+  border-top: 1px dashed var(--border);
+  flex-wrap: wrap;
+  background: rgba(59,130,246,0.04);
+}
+.doc-url-inline {
+  flex: 1;
+  min-width: 160px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  padding: 0.3rem 0.5rem;
+  font-size: 0.75rem;
+}
+.doc-date-inline {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  padding: 0.3rem 0.5rem;
+  font-size: 0.75rem;
+  width: 130px;
+}
+
+/* upload progress */
+.doc-upload-progress {
+  padding: 0.4rem 0.75rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.spinner-inline {
+  width: 14px; height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+  display: inline-block;
+}
+
+/* ── Modal PDF preview ── */
+.modal-pdf-preview {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.8);
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+.modal-pdf-preview.hidden { display: none; }
+.modal-pdf-content {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  width: 100%;
+  max-width: 900px;
+  height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.6);
+}
+.modal-pdf-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.9rem 1.2rem;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.modal-pdf-title { font-size: 0.9rem; font-weight: 600; }
+.pdf-preview-frame {
+  flex: 1;
+  border: none;
+  width: 100%;
+  background: #fff;
+}
+.doc-sin-vence { opacity: 0.35; font-style: italic; }

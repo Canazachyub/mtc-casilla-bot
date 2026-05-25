@@ -19,7 +19,8 @@ import logging
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 import httpx
@@ -27,6 +28,45 @@ from playwright.async_api import BrowserContext, Page, Response
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 logger = logging.getLogger(__name__)
+
+# ─────────────────────────────────────────────────────────────────
+# Parser de fecha en español (formato del detalle MTC)
+# ─────────────────────────────────────────────────────────────────
+
+_MESES_ES: dict[str, int] = {
+    "enero": 1, "febrero": 2, "marzo": 3, "abril": 4,
+    "mayo": 5, "junio": 6, "julio": 7, "agosto": 8,
+    "septiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12,
+}
+
+# Matchea: "jueves, 14 mayo 2026, 2:18:47 p. m."
+_FECHA_ES_LONG_RE = re.compile(
+    r"(\d{1,2})\s+(" + "|".join(_MESES_ES) + r")\s+(\d{4})",
+    re.IGNORECASE,
+)
+
+
+def parse_fecha_detail(text: str) -> date | None:
+    """Parsea la fecha larga en español del detalle MTC.
+
+    Ejemplos soportados:
+        ``"jueves, 14 mayo 2026, 2:18:47 p. m."`` → ``date(2026, 5, 14)``
+        ``"Fecha: miércoles, 8 mayo 2026, 10:05:00 a. m."`` → ``date(2026, 5, 8)``
+
+    Returns:
+        ``date`` si pudo parsear, ``None`` si no matcheó.
+    """
+    m = _FECHA_ES_LONG_RE.search(text or "")
+    if not m:
+        return None
+    try:
+        day = int(m.group(1))
+        mes = _MESES_ES[m.group(2).lower()]
+        year = int(m.group(3))
+        return date(year, mes, day)
+    except (ValueError, KeyError):
+        return None
+
 
 # ─────────────────────────────────────────────────────────────────
 # Selectores del detalle
@@ -68,7 +108,8 @@ class DetailMetadata:
         emisor: emisor (versión completa, del ``mat-card-title``).
         categoria: etiqueta de la categoría.
         de: línea ``De:`` del subtítulo (sin el prefijo).
-        fecha_full: línea ``Fecha:`` cruda.
+        fecha_full: línea ``Fecha:`` cruda (ej. "jueves, 14 mayo 2026, 2:18:47 p. m.").
+        fecha: fecha parseada de ``fecha_full`` (``None`` si no pudo parsear).
         asunto: línea ``Asunto:`` cruda.
         cuerpo: texto del cuerpo del mensaje.
     """
@@ -77,6 +118,7 @@ class DetailMetadata:
     categoria: str = ""
     de: str = ""
     fecha_full: str = ""
+    fecha: date | None = field(default=None)
     asunto: str = ""
     cuerpo: str = ""
 
@@ -147,6 +189,14 @@ async def extract_detail_metadata(page: Page) -> DetailMetadata:
                 md.de = _strip_label(text)
             elif low.startswith("fecha:"):
                 md.fecha_full = _strip_label(text)
+                md.fecha = parse_fecha_detail(md.fecha_full)
+                if md.fecha is None:
+                    logger.warning(
+                        "Fecha del detalle no parseada: %r — revisar parse_fecha_detail",
+                        md.fecha_full,
+                    )
+                else:
+                    logger.debug("Fecha detalle parseada: %s (raw=%r)", md.fecha, md.fecha_full)
             elif low.startswith("asunto:"):
                 md.asunto = _strip_label(text)
     except PlaywrightTimeoutError as exc:
