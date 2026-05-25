@@ -1625,6 +1625,13 @@ function bindNuevaTareaEvents() {
     applyFilters();
     closeModal();
     showToast(`Tarea "${documento}" agregada`, 'ok');
+
+    // Sincronizar con el Sheet si hay API configurada
+    if (state.apiUrl) {
+      apiPost('save_tarea_manual', item)
+        .then(() => showToast('Tarea guardada en el Sheet ✅', 'ok'))
+        .catch(err => showToast('Guardado local OK · Sheet: ' + err.message, 'warn'));
+    }
   });
 }
 

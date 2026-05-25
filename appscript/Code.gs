@@ -31,8 +31,9 @@ function doPost(e) {
     const body   = JSON.parse(e.postData.contents);
     const action = (body.action || '').toLowerCase();
     switch (action) {
-      case 'upload_empresa_doc': return jsonResponse_(handleUploadEmpresaDoc_(body));
-      default:                   return jsonResponse_({ error: 'unknown_action', action });
+      case 'upload_empresa_doc':  return jsonResponse_(handleUploadEmpresaDoc_(body));
+      case 'save_tarea_manual':   return jsonResponse_(handleSaveTareaManual_(body));
+      default:                    return jsonResponse_({ error: 'unknown_action', action });
     }
   } catch (err) {
     logError_('doPost', err, {});
@@ -503,6 +504,42 @@ function handleSummaryCached_() {
 function jsonResponse_(payload) {
   return ContentService.createTextOutput(JSON.stringify(payload))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+function handleSaveTareaManual_(body) {
+  const sheet  = getNotifSheet_();
+  const rows   = sheet.getDataRange().getValues();
+  const headers = rows[0];
+
+  // Si el id ya existe, no duplicar
+  const idIdx = headers.indexOf('id');
+  if (idIdx >= 0) {
+    for (let i = 1; i < rows.length; i++) {
+      if (rows[i][idIdx] === body.id) return { ok: true, skipped: true };
+    }
+  }
+
+  // Construir fila respetando el orden de columnas existente
+  const row = headers.map(h => {
+    switch (h) {
+      case 'id':                  return body.id                  || '';
+      case 'empresa':             return body.empresa             || '';
+      case 'ruc':                 return body.ruc                 || '';
+      case 'sede':                return body.sede                || '';
+      case 'documento':           return body.documento           || '';
+      case 'asunto':              return body.asunto              || '';
+      case 'fecha_notificacion':  return body.fecha_notificacion  || '';
+      case 'plazo_vencimiento':   return body.plazo_vencimiento   || '';
+      case 'dias_restantes':      return body.dias_restantes      || '';
+      case 'progreso':            return body.progreso            || 'NO INICIADO';
+      case 'tarea':               return body.tarea               || '';
+      case 'origen':              return 'manual';
+      default:                    return '';
+    }
+  });
+
+  sheet.appendRow(row);
+  return { ok: true, id: body.id };
 }
 
 function getNotifSheet_() {
