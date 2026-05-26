@@ -1520,6 +1520,7 @@ function showDashboard() {
   document.getElementById('onboarding').classList.add('hidden');
   document.getElementById('dashboard').classList.remove('hidden');
   document.getElementById('btn-refresh').classList.remove('hidden');
+  document.getElementById('btn-resumen-dia').classList.remove('hidden');
   document.getElementById('btn-change-url').classList.remove('hidden');
 }
 
@@ -1571,6 +1572,72 @@ async function syncEmpresaDocsFromApi() {
       if (state.view === 'empresas') renderEmpresasView();
     }
   } catch (_) {}
+}
+
+/* ──────────────────────────── Resumen del día ─────────────────── */
+
+function generateResumenDiario() {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const fecha    = new Date().toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const empresas = loadEmpresasFromStorage();
+
+  const lineas = Object.values(empresas)
+    .filter(e => e.activo !== false)
+    .map(e => {
+      const count = state.items.filter(i => {
+        const f = (i.fecha_notificacion || '').slice(0, 10);
+        if (f !== todayStr) return false;
+        // Coincidir por RUC si existe, sino por nombre
+        if (e.ruc && i.ruc) return String(i.ruc).trim() === String(e.ruc).trim();
+        return (i.empresa || '').toUpperCase().includes(e.key.toUpperCase().split(' ')[0]);
+      }).length;
+
+      const msg = count > 0
+        ? `${count} notificación${count !== 1 ? 'es' : ''} nueva${count !== 1 ? 's' : ''}.`
+        : 'no hay notificaciones nuevas.';
+      return `• ${e.key}: ${msg}`;
+    });
+
+  return `De la revisión de casillas de MTC al día de hoy ${fecha}:\n${lineas.join('\n')}`;
+}
+
+function renderResumenPanel() {
+  const panel = document.getElementById('panel-resumen');
+  const texto = document.getElementById('resumen-texto');
+  if (!panel || !texto) return;
+  texto.textContent = generateResumenDiario();
+}
+
+function bindResumenEvents() {
+  const btnAbrir  = document.getElementById('btn-resumen-dia');
+  const btnCerrar = document.getElementById('btn-cerrar-resumen');
+  const btnCopiar = document.getElementById('btn-copiar-resumen');
+  const panel     = document.getElementById('panel-resumen');
+
+  btnAbrir?.addEventListener('click', () => {
+    renderResumenPanel();
+    panel.classList.toggle('hidden');
+  });
+
+  btnCerrar?.addEventListener('click', () => panel.classList.add('hidden'));
+
+  btnCopiar?.addEventListener('click', () => {
+    const txt = document.getElementById('resumen-texto').textContent;
+    navigator.clipboard.writeText(txt).then(() => {
+      btnCopiar.textContent = '¡Copiado!';
+      setTimeout(() => { btnCopiar.textContent = 'Copiar'; }, 2000);
+    }).catch(() => {
+      // Fallback para navegadores sin clipboard API
+      const ta = document.createElement('textarea');
+      ta.value = txt;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+      btnCopiar.textContent = '¡Copiado!';
+      setTimeout(() => { btnCopiar.textContent = 'Copiar'; }, 2000);
+    });
+  });
 }
 
 /* ──────────────────────────── Tareas manuales ─────────────────── */
@@ -1738,6 +1805,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Tareas manuales
   bindNuevaTareaEvents();
+
+  // Resumen del día
+  bindResumenEvents();
 
   // Initial view state
   switchView('all');

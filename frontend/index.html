@@ -20,6 +20,7 @@
   </div>
   <div class="header-actions">
     <span id="last-update" class="muted"></span>
+    <button id="btn-resumen-dia" class="btn-resumen-dia hidden" title="Ver resumen del día para WhatsApp">📋 Resumen</button>
     <button id="btn-refresh" class="btn-icon hidden" title="Recargar datos">↺ Actualizar</button>
   </div>
 </header>
@@ -70,6 +71,18 @@
       <span class="metric-label">Empresas activas</span>
     </div>
   </section>
+
+  <!-- Resumen del día -->
+  <div id="panel-resumen" class="resumen-panel hidden">
+    <div class="resumen-panel-header">
+      <span class="resumen-panel-title">📋 Resumen del día</span>
+      <div class="resumen-panel-actions">
+        <button id="btn-copiar-resumen" class="btn-copiar-resumen">Copiar</button>
+        <button id="btn-cerrar-resumen" class="resumen-close">✕</button>
+      </div>
+    </div>
+    <pre id="resumen-texto" class="resumen-texto"></pre>
+  </div>
 
   <!-- Vista nav tabs -->
   <nav class="view-nav">

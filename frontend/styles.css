@@ -1032,6 +1032,77 @@ footer {
 }
 .btn-add-tarea:hover { opacity: 0.85; }
 
+/* ── Botón Resumen header ── */
+.btn-resumen-dia {
+  background: transparent;
+  color: var(--primary);
+  border: 1px solid var(--primary);
+  border-radius: var(--radius);
+  padding: 0.35rem 0.9rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background .15s, color .15s;
+}
+.btn-resumen-dia:hover { background: var(--primary); color: #fff; }
+
+/* ── Panel resumen del día ── */
+.resumen-panel {
+  margin: 0 1.5rem 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.resumen-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: rgba(99,102,241,0.07);
+}
+.resumen-panel-title {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.resumen-panel-actions { display: flex; gap: 0.5rem; align-items: center; }
+.btn-copiar-resumen {
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  padding: 0.3rem 0.85rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity .15s;
+  min-width: 80px;
+}
+.btn-copiar-resumen:hover { opacity: 0.85; }
+.resumen-close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0.2rem 0.4rem;
+  border-radius: var(--radius);
+}
+.resumen-close:hover { color: var(--text); background: var(--border); }
+.resumen-texto {
+  margin: 0;
+  padding: 0.9rem 1rem;
+  font-family: inherit;
+  font-size: 0.88rem;
+  line-height: 1.7;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: all;
+}
+
 /* ── Accordion card ── */
 .empresa-card {
   background: var(--surface);
