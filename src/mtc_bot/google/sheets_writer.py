@@ -263,6 +263,78 @@ def update_notificacion_fields(
     return True
 
 
+def write_resumen_diario(
+    sa_json_path: Path,
+    sheet_id: str,
+    results: list[tuple[str, str, int, int, str | None]],
+    run_date: "date",
+    texto_resumen: str,
+) -> None:
+    """Escribe el resumen del run en el tab ``resumen_diario``, creándolo si no existe.
+
+    Cada run agrega una fila por empresa. Si el tab no existe se crea con headers.
+
+    Args:
+        sa_json_path: path al SA JSON.
+        sheet_id: ID del Sheet.
+        results: lista de tuplas ``(empresa, ruc, listed, completados, error)``.
+        run_date: fecha del run (``date.today()``).
+        texto_resumen: texto completo formateado para WhatsApp.
+    """
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo
+
+    HEADERS = [
+        "fecha", "timestamp_run", "empresa", "ruc",
+        "notif_encontradas", "notif_nuevas", "estado", "error_msg", "texto_linea",
+    ]
+    TAB = "resumen_diario"
+
+    client = get_client(sa_json_path)
+    sh = client.open_by_key(sheet_id)
+
+    try:
+        ws = sh.worksheet(TAB)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title=TAB, rows=500, cols=len(HEADERS))
+        ws.append_row(HEADERS)
+        ws.freeze(rows=1)
+        logger.info("Tab '%s' creado", TAB)
+
+    now = _dt.now(tz=ZoneInfo("America/Lima")).isoformat(timespec="seconds")
+    fecha_str = run_date.isoformat()
+
+    rows_to_add = []
+    for empresa, ruc, listed, completados, error in results:
+        if error:
+            estado = "error"
+            linea = f"• {empresa}: ❌ error de conexión"
+        elif completados > 0:
+            estado = "ok"
+            suf = "es" if completados > 1 else ""
+            linea = f"• {empresa}: {completados} notificación{suf} nueva{'s' if completados > 1 else ''}"
+        elif listed > 0:
+            estado = "ok"
+            linea = f"• {empresa}: {listed} encontradas (ya registradas)"
+        else:
+            estado = "ok"
+            linea = f"• {empresa}: no hay notificaciones nuevas"
+
+        rows_to_add.append([
+            fecha_str, now, empresa, ruc,
+            listed, completados, estado, error or "", linea,
+        ])
+
+    if rows_to_add:
+        ws.append_rows(rows_to_add, value_input_option="USER_ENTERED")
+
+    logger.info(
+        "resumen_diario: %d filas escritas para fecha=%s",
+        len(rows_to_add),
+        fecha_str,
+    )
+
+
 __all__ = [
     "REQUIRED_TABS",
     "SheetStatus",
@@ -272,4 +344,5 @@ __all__ = [
     "notification_exists",
     "update_notificacion_fields",
     "verify_sheet_access",
+    "write_resumen_diario",
 ]

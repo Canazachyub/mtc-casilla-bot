@@ -381,7 +381,7 @@ def _print_run_summary(
 
     lines: list[str] = [f"De la revisión de casillas de MTC {fecha_label}:"]
     nuevas_total = 0
-    for empresa, listed, completados, error in results:
+    for empresa, _ruc, listed, completados, error in results:
         name = _short_name(empresa)
         if error:
             lines.append(f"• {name}: ❌ error de conexión (timeout MTC)")
@@ -861,10 +861,10 @@ def run_cmd(
                         break  # error no recuperable o último intento
 
             if last_exc is not None:
-                run_results.append((creds.empresa, 0, 0, str(last_exc)))
+                run_results.append((creds.empresa, creds.ruc, 0, 0, str(last_exc)))
                 console.print(f"  [red]✗ Error fatal: {last_exc}[/red]\n")
             else:
-                run_results.append((creds.empresa, listed, completados, None))
+                run_results.append((creds.empresa, creds.ruc, listed, completados, None))
                 if dry_run:
                     console.print(f"  [green]✓[/green] {listed} listadas (dry-run)\n")
                 else:
@@ -874,6 +874,26 @@ def run_cmd(
 
         if not dry_run:
             _print_run_summary(run_results, since_date)
+            # Guardar resumen en Sheet tab resumen_diario
+            try:
+                from .google.sheets_writer import write_resumen_diario
+                texto = "\n".join(
+                    f"• {_short_name(e)}: " + (
+                        f"{c} notificación{'es' if c > 1 else ''} nueva{'s' if c > 1 else ''}"
+                        if c > 0 else ("error" if err else "no hay notificaciones nuevas")
+                    )
+                    for e, _r, l, c, err in run_results
+                )
+                write_resumen_diario(
+                    settings.google_service_account_json,
+                    settings.sheet_id,
+                    run_results,
+                    date.today(),
+                    texto,
+                )
+                console.print("[dim]✓ Resumen guardado en Sheet (tab: resumen_diario)[/dim]")
+            except Exception as exc:  # noqa: BLE001
+                console.print(f"[yellow]⚠ No se pudo guardar resumen en Sheet: {exc}[/yellow]")
 
     asyncio.run(_run_all())
 
