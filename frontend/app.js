@@ -1077,6 +1077,53 @@ function renderResumenEstructurado(d) {
   `;
 }
 
+/* ──────────────────────── Inline field editor ─────────────────── */
+
+function eField(campo, id, rawVal, displayVal, type = 'text') {
+  const raw  = escapeHtml(String(rawVal ?? ''));
+  const disp = displayVal !== undefined ? String(displayVal) : (raw || '—');
+  return `<span class="editable-val" data-campo="${campo}" data-id="${escapeHtml(id)}" data-raw="${raw}" data-type="${type}" title="Haz clic para editar">${disp}</span>`;
+}
+
+function startEditField(el) {
+  if (el.classList.contains('editing')) return;
+  el.classList.add('editing');
+  const raw      = el.dataset.raw;
+  const type     = el.dataset.type || 'text';
+  const origHTML = el.innerHTML;
+  const extra    = type === 'number' ? ' min="0" step="1"' : '';
+  el.innerHTML = `<input class="ef-input" type="${type}" value="${escapeHtml(raw)}"${extra}><button class="ef-save-btn" title="Guardar">✓</button><button class="ef-cancel-btn" title="Cancelar">✕</button>`;
+  const input = el.querySelector('.ef-input');
+  input.focus();
+  if (input.select) input.select();
+  el.querySelector('.ef-cancel-btn').onclick = e => { e.stopPropagation(); el.innerHTML = origHTML; el.classList.remove('editing'); };
+  el.querySelector('.ef-save-btn').onclick   = async e => { e.stopPropagation(); await saveField(el, input.value, origHTML); };
+  input.addEventListener('keydown', async e => {
+    if (e.key === 'Enter')  { e.preventDefault(); await saveField(el, input.value, origHTML); }
+    else if (e.key === 'Escape') { el.innerHTML = origHTML; el.classList.remove('editing'); }
+  });
+}
+
+async function saveField(el, newVal, origHTML) {
+  const { campo, id } = el.dataset;
+  el.querySelectorAll('button').forEach(b => { b.disabled = true; });
+  const input = el.querySelector('.ef-input');
+  if (input) input.disabled = true;
+  try {
+    await api('update_status', { id, campo, valor: newVal });
+    const item = state.items.find(i => i.id === id);
+    if (item) item[campo] = newVal;
+    el.dataset.raw = newVal;
+    el.innerHTML = campo === 'plazo_vencimiento' ? formatDate(newVal) : escapeHtml(newVal || '—');
+    el.classList.remove('editing');
+    showToast(`${campo.replace(/_/g, ' ')} actualizado`, 'ok');
+  } catch (err) {
+    el.innerHTML = origHTML;
+    el.classList.remove('editing');
+    showToast('Error al guardar: ' + err.message, 'error');
+  }
+}
+
 function renderDetailTab(d) {
   const progreso = d.progreso || 'NO INICIADO';
   const progresoOptions = ALLOWED_PROGRESO.map(p =>
@@ -1100,11 +1147,11 @@ function renderDetailTab(d) {
       <div><strong>Empresa:</strong> ${escapeHtml(d.empresa || '—')}</div>
       <div><strong>RUC:</strong> ${escapeHtml(d.ruc || '—')}</div>
       <div><strong>Sede:</strong> ${d.sede ? `📍 ${escapeHtml(d.sede)}` : '—'}</div>
-      <div><strong>Emisor:</strong> ${escapeHtml(d.emisor || '—')}</div>
+      <div><strong>Emisor:</strong> ${eField('emisor', d.id, d.emisor || '', escapeHtml(d.emisor || '—'))}</div>
       <div><strong>Casilla origen:</strong> ${escapeHtml(d.casilla_origen || '—')}</div>
       <div><strong>Referencia:</strong> ${escapeHtml(d.referencia || '—')}</div>
-      <div><strong>Plazo:</strong> ${escapeHtml(String(d.plazo_dias_habiles || '—'))} días hábiles</div>
-      <div><strong>Vence:</strong> ${formatDate(d.plazo_vencimiento)} &nbsp;${badgeDias(d.dias_restantes)}</div>
+      <div><strong>Plazo:</strong> ${eField('plazo_dias_habiles', d.id, d.plazo_dias_habiles ?? '', escapeHtml(String(d.plazo_dias_habiles || '—')), 'number')} días hábiles</div>
+      <div><strong>Vence:</strong> ${eField('plazo_vencimiento', d.id, d.plazo_vencimiento || '', formatDate(d.plazo_vencimiento), 'date')} &nbsp;${badgeDias(d.dias_restantes)}</div>
       <div><strong>Confianza IA:</strong> ${escapeHtml(d.confianza_ia || '—')} &nbsp;<span class="muted small">${escapeHtml(d.modelo_ia || '')}</span></div>
       <div>
         <strong>Progreso:</strong><br>
@@ -1164,6 +1211,9 @@ function bindDetailTabEvents(id, detail) {
       saveNotas(id, notas);
     });
   }
+  document.querySelectorAll('#modal-body .editable-val').forEach(el => {
+    el.addEventListener('click', () => startEditField(el));
+  });
 }
 
 function embedDriveUrl(url) {
