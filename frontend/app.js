@@ -6,6 +6,7 @@
 
 const STORAGE_KEY    = 'mtc_bot_api_url';
 const API_URL_PREFIX = 'https://script.google.com/macros/';
+const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbznqF-CmlzlNs3IsnS7x0DUjQFeB1ObpxfwaCjUPz3L2r5JCBpSAlFV063xxo3EKZZ0/exec';
 
 /* ──────────────────────────── Datos legales de empresas ───────── */
 const EMPRESAS_LEGALES = {
@@ -88,8 +89,8 @@ const state = {
 function getStoredApiUrl() {
   try {
     const raw = (localStorage.getItem(STORAGE_KEY) || '').trim();
-    return (!raw || raw.includes('REEMPLAZAR_AQUI')) ? '' : raw;
-  } catch { return ''; }
+    return (!raw || raw.includes('REEMPLAZAR_AQUI')) ? DEFAULT_API_URL : raw;
+  } catch { return DEFAULT_API_URL; }
 }
 function saveApiUrl(url)       { localStorage.setItem(STORAGE_KEY, url); }
 function clearApiUrlAndReload(){ try { localStorage.removeItem(STORAGE_KEY); } catch {} location.reload(); }
