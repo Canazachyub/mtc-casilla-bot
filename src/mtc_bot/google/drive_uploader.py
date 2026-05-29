@@ -99,10 +99,21 @@ def get_drive_service_oauth(oauth_json_path: Path, token_path: Path):
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            logger.info("[drive] Refrescando OAuth token...")
-            creds.refresh(Request())
-        else:
-            logger.info("[drive] Primera autenticación OAuth — se abrirá el navegador...")
+            try:
+                logger.info("[drive] Refrescando OAuth token...")
+                creds.refresh(Request())
+            except Exception as refresh_err:  # invalid_grant u otro error de red
+                logger.warning(
+                    "[drive] No se pudo refrescar el token (%s) — iniciando nueva auth...",
+                    refresh_err,
+                )
+                # Borrar el token inválido para no intentar el mismo refresh la próxima vez
+                if token_path.exists():
+                    token_path.unlink()
+                creds = None
+
+        if not creds or not creds.valid:
+            logger.info("[drive] Abriendo browser para nueva autorización OAuth...")
             flow = InstalledAppFlow.from_client_secrets_file(str(oauth_json_path), _OAUTH_SCOPES)
             creds = flow.run_local_server(port=0)
 
