@@ -42,8 +42,8 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-Log "--- run --since today ---"
-$runOut = & $UvExe run mtc-bot run --since today 2>&1
+Log "--- run --since 2d ---"
+$runOut = & $UvExe run mtc-bot run --since 2d 2>&1
 foreach ($l in $runOut) { Log "$l" }
 $exitCode = $LASTEXITCODE
 
