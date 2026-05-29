@@ -612,6 +612,7 @@ async def _process_notification(  # noqa: PLR0911,PLR0912,PLR0913,PLR0915 — pi
             item.fecha,
             oauth_json_path=settings.oauth_credentials_json,
             oauth_token_path=settings.oauth_token_json,
+            oauth_login_hint=settings.google_oauth_hint,
         )
     except Exception as exc:  # noqa: BLE001 — HttpError u otros
         console.print(f"    [red]✗[/red] {asunto_short}: Drive upload falló: {exc}")

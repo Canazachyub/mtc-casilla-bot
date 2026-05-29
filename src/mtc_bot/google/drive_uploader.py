@@ -79,7 +79,7 @@ def get_drive_service(sa_json_path: Path):
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 
-def get_drive_service_oauth(oauth_json_path: Path, token_path: Path):
+def get_drive_service_oauth(oauth_json_path: Path, token_path: Path, login_hint: str = ""):
     """Crea servicio Drive v3 con OAuth user delegation.
 
     Primera vez abre el navegador para consentimiento y guarda el token.
@@ -113,9 +113,12 @@ def get_drive_service_oauth(oauth_json_path: Path, token_path: Path):
                 creds = None
 
         if not creds or not creds.valid:
-            logger.info("[drive] Abriendo browser para nueva autorización OAuth...")
+            hint_msg = f" (cuenta: {login_hint})" if login_hint else ""
+            logger.info("[drive] Abriendo browser para nueva autorización OAuth...%s", hint_msg)
+            print(f"\n⚠️  AUTORIZACION DRIVE: se va a abrir el browser. Seleccioná la cuenta: {login_hint or '(ver .env GOOGLE_OAUTH_HINT)'}\n")
             flow = InstalledAppFlow.from_client_secrets_file(str(oauth_json_path), _OAUTH_SCOPES)
-            creds = flow.run_local_server(port=0)
+            kwargs = {"login_hint": login_hint} if login_hint else {}
+            creds = flow.run_local_server(port=0, **kwargs)
 
         token_path.parent.mkdir(parents=True, exist_ok=True)
         token_path.write_text(creds.to_json(), encoding="utf-8")
@@ -170,6 +173,7 @@ def upload_pdf(
     fecha: date,
     oauth_json_path: Path | None = None,
     oauth_token_path: Path | None = None,
+    oauth_login_hint: str = "",
 ) -> UploadedFile:
     """Sube un PDF a Drive en la estructura ``<root>/YYYY/MM-Mes/RUC/<filename>``.
 
@@ -184,6 +188,7 @@ def upload_pdf(
         fecha: fecha de la notificación (define YYYY/MM-Mes).
         oauth_json_path: path al ``oauth-credentials.json`` (Desktop app).
         oauth_token_path: path al token OAuth guardado entre runs.
+        oauth_login_hint: email hint para pre-seleccionar la cuenta en el browser.
 
     Returns:
         ``UploadedFile`` con file_id, name, view_url, folder_id.
@@ -192,7 +197,7 @@ def upload_pdf(
         raise FileNotFoundError(f"PDF no existe: {pdf_path}")
 
     if oauth_json_path and oauth_json_path.exists() and oauth_token_path is not None:
-        service = get_drive_service_oauth(oauth_json_path, oauth_token_path)
+        service = get_drive_service_oauth(oauth_json_path, oauth_token_path, login_hint=oauth_login_hint)
     else:
         logger.warning("[drive] OAuth no configurado — usando SA (puede fallar con 403 quota)")
         service = get_drive_service(sa_json_path)
