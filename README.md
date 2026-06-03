@@ -177,19 +177,85 @@ Ver [`appscript/README.md`](appscript/README.md) para el detalle completo.
 # Verificar configuración
 uv run mtc-bot doctor
 
-# Dry-run (no escribe nada)
-uv run mtc-bot run --dry-run
+# Dry-run (solo lista, no escribe nada)
+uv run mtc-bot run --dry-run --since today
 
 # Procesar notificaciones de hoy
 uv run mtc-bot run --since today
 
-# Procesar un RUC específico desde fecha
+# Procesar desde una fecha específica
+uv run mtc-bot run --since 2026-05-13
+
+# Procesar un RUC específico
 uv run mtc-bot run --since yesterday --ruc 20602194958
+
+# Sobreescribir notificaciones ya procesadas (reprocesa PDFs + IA + Sheet)
+uv run mtc-bot run --since 2026-05-13 --overwrite
 
 # Dashboard local
 cd frontend && python -m http.server 8080
 # Abrir http://localhost:8080
+
+# Herramienta de debug (ver sección abajo)
+uv run python scripts/debug_scraper_ui.py
 ```
+
+---
+
+## 🔍 Herramienta de Debug (`debug_scraper_ui.py`)
+
+GUI Tkinter para verificar el pipeline casilla por casilla antes de correr producción.
+
+```bash
+uv sync --extra dev   # instala tkcalendar (solo la primera vez)
+uv run python scripts/debug_scraper_ui.py
+```
+
+### Funciones
+
+| Feature | Descripción |
+|---|---|
+| **Selector de casillas** | Listbox multi-selección con todas las casillas activas del CSV |
+| **Calendarios 📅** | Date picker visual para Desde/Hasta |
+| **Botones rápidos** | Hoy / Ayer / 7d / 14d / 30d para setear el `Desde` |
+| **Modo visible** | Abre el browser en pantalla para ver el scraping en vivo |
+| **Solo listar** | Dry-run: muestra fechas y paginación sin descargar PDFs |
+| **🤖 Test IA** | Prueba la conexión a DeepSeek y Gemini con ping mínimo |
+
+### Tabs de resultado
+
+| Tab | Muestra |
+|---|---|
+| **Logs** | Logs en tiempo real con colores por nivel (azul=pasos, amarillo=warnings, rojo=errores) |
+| **Notificaciones** | Tabla con `raw_fecha` vs `fecha parseada`, estado del filtro, columnas ✓/✗ por tipo de PDF |
+| **PDFs** | Orden de descarga, clasificación, orden de merge, preview del contexto enviado a la IA |
+| **Capturas** | Lista de screenshots — doble clic para abrir, botón para ir a la carpeta del run |
+
+### Estructura de logs
+
+Cada ejecución genera una carpeta con timestamp único:
+
+```
+data/debug_logs/
+└── YYYYMMDD_HHMMSS/               ← timestamp del run
+    └── EMPRESA__RUC/              ← una carpeta por casilla
+        ├── 00_sesion.txt          ← empresa, RUC, desde, hasta, modo, hora
+        ├── debug.log              ← log completo correlacionable con capturas
+        ├── 01_login_ok.png
+        ├── 02_inbox_pag01.png     ← una captura por página del inbox
+        ├── 02_inbox_pag02.png
+        ├── 03_01_detalle.png      ← detalle de cada notificación
+        ├── 03_01_adjuntos.png
+        └── contexto_ia.txt        ← texto exacto que recibirá DeepSeek/Gemini
+```
+
+### Verificaciones automáticas
+
+- **Fechas por página** — tabla `raw_fecha → parsed → estado filtro` por cada item del inbox
+- **Paginación** — espera que el label del paginator cambie antes de leer (evita duplicados)
+- **Orden de merge** — muestra `← PRIMERO / ← penúltimo / ← ÚLTIMO` para verificar el orden del PDF final
+- **Discrepancia de fecha** — alerta si la fecha del inbox difiere de la fecha del detalle
+- **Constancias faltantes** — avisa si no hay `constancia_lectura` o `constancia_notificacion`
 
 ---
 
@@ -202,6 +268,35 @@ cd frontend && python -m http.server 8080
 | `plantillas` | Plantillas de respuesta para el generador IA |
 | `logs` | Auditoría de errores y operaciones |
 | `rucs` | Credenciales por RUC — acceso restringido, nunca expuesto via API |
+
+---
+
+## 🧠 Extracción IA — fuentes combinadas
+
+El modelo recibe **tres fuentes de información** por notificación para maximizar la calidad de extracción:
+
+```
+=== METADATA DEL PORTAL MTC ===
+Emisor: SUPERINTENDENCIA DE TRANSPORTE TERRESTRE... - SUTRAN
+Categoría: Cartas
+Asunto: NOTIFICACIÓN DE LA CARTA N° 001056-CR-2026-SUTRAN/06.3.4-SGFSV
+Fecha de notificación: jueves, 14 mayo 2026, 10:00:00 a. m.
+
+=== MENSAJE DEL PORTAL (siempre texto limpio) ===
+Sírvase dar cuenta que se ha notificado a [EMPRESA]...
+De conformidad con el artículo 21 de la Ley N° 27444...
+
+=== TEXTO DEL PDF ADJUNTO ===
+[contenido del documento oficial]
+```
+
+| Fuente | Ventaja |
+|---|---|
+| Metadata portal | Emisor y asunto ya etiquetados, siempre disponibles |
+| Cuerpo HTML | Siempre texto limpio (sin OCR), contiene nombre exacto del doc y base legal |
+| PDF texto | Contenido completo del documento para análisis profundo |
+
+Campos que mejoran con este enfoque: `documento`, `emisor`, `fundamento_legal`, `tipo_acto`, `casilla_origen`, `plazo_dias_habiles`.
 
 ---
 

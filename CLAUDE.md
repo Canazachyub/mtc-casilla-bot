@@ -209,8 +209,8 @@ uv run ruff check src/ && uv run ruff format src/
 
 > **Actualizar al final de cada sesión.**
 
-**Fase actual:** Fase 1 — MVP del pipeline ✅ **FUNCIONAL** (2026-05-13)
-**Próximo paso:** QA pass formal (Fase 1) → Fase 2 (plantillas + propuestas de respuesta).
+**Fase actual:** Fase 1 ✅ verificada y estabilizada (2026-06-03)
+**Próximo paso:** QA pass formal → Fase 2 (plantillas + propuestas de respuesta).
 
 **Hitos Fase 0 — completados (2026-04-28):**
 - [x] Estructura, `pyproject.toml`, `config.py`, `models.py`, `cli.py`
@@ -219,18 +219,27 @@ uv run ruff check src/ && uv run ruff format src/
 
 **Hitos Fase 1 — completados (2026-05-13):**
 - [x] `scraper/login.py`: login directo (PERSONA JURÍDICA) + Clave SOL — 10 RUCs reales OK
-- [x] `scraper/inbox.py`: listado, paginación, date parser ("Hoy"/"Ayer"/DD-MM-YYYY), early termination, `_navigate_to_page`
+- [x] `scraper/inbox.py`: listado, paginación, date parser, early termination, `_navigate_to_page`
 - [x] `scraper/downloader.py`: descarga de 3 adjuntos por notificación vía Playwright
-- [x] `pdf_pipeline.py`: merge ordenado (doc principal → constancia notif → constancia lectura) + rename con nombre oficial
-- [x] `ai_extractor.py`: DeepSeek primario (JSON estructurado), Gemini fallback automático
-- [x] `google/drive_uploader.py`: estructura `YYYY/MM/RUC/` + OAuth User Delegation para storage
-- [x] `google/sheets_writer.py`: append idempotente por `{ruc}__{notification_id[:16]}`
-- [x] `cli.py`: `mtc-bot run --since today/all` end-to-end en 10 RUCs reales
-- [x] Idempotencia verificada: re-ejecución muestra `⊝ ya procesada (skip)`
-- [x] Frontend muestra notificaciones reales 2026 con metadata + link Drive
-- [x] Screenshots automáticas en modo headed (`playwright-screenshots/{ruc}/`)
+- [x] `pdf_pipeline.py`: merge ordenado + rename con nombre oficial
+- [x] `ai_extractor.py`: DeepSeek primario + Gemini fallback + contexto combinado (portal+PDF)
+- [x] `google/drive_uploader.py`: estructura `YYYY/MM/RUC/` + OAuth User Delegation
+- [x] `google/sheets_writer.py`: append idempotente + `delete_notificacion` para `--overwrite`
+- [x] `cli.py`: `mtc-bot run --since --overwrite` end-to-end en 9 RUCs reales
+- [x] Paginación robusta: espera cambio del label del paginator (no solo networkidle)
+- [x] Frontend: edición inline de `emisor`, `plazo_dias_habiles`, `plazo_vencimiento`
+- [x] `scripts/debug_scraper_ui.py`: GUI Tkinter para verificación día a día
+- [x] 9 casillas verificadas con debug tool (13/05→03/06/2026) — sin errores de fecha/PDFs
+- [x] Run completo con `--overwrite` exitoso: 9 notifs procesadas, Sheet actualizado
 - [ ] `obsidian_writer.py` — diferido a Fase 2
 - [ ] Tests ≥70% coverage — pendiente QA pass formal
+
+**Mejoras aplicadas en sesión 2026-06-03:**
+- `inbox.py`: fix paginación Angular — esperar cambio de paginator antes de leer items
+- `cli.py`: flag `--overwrite` — borra fila existente y reprocesa completo
+- `ai_extractor.py` (input): combina metadata portal + cuerpo HTML + PDF texto
+- `debug_scraper_ui.py`: GUI completa con calendarios, capturas por página, test IA,
+  tabla de fechas por pág, orden de merge, preview contexto IA, carpetas timestampeadas
 
 **Pendientes para Fase 2:**
 1. QA pass formal de Fase 1 (ruff + pytest + security scan).
