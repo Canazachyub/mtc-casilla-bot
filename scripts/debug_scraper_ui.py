@@ -152,7 +152,15 @@ class _ScrapeSession:
 
     async def _run_one(self, lg: logging.Logger, creds: Any) -> None:
         from mtc_bot.scraper.login import LoginFailed, browser_session, perform_login
-        from mtc_bot.scraper.inbox import click_item, list_inbox
+        from mtc_bot.scraper.inbox import (
+            click_item,
+            _get_paginator_state,
+            _is_next_page_enabled,
+            _read_items_in_current_page,
+            DEFAULT_MAX_PAGES,
+            SEL_ITEM,
+            SEL_PAG_NEXT,
+        )
         from mtc_bot.scraper.downloader import (
             download_attachments,
             extract_detail_metadata,
@@ -207,19 +215,99 @@ class _ScrapeSession:
                 if self._stop.is_set():
                     return
 
-                # ── 2. Inbox ──────────────────────────────────────────
+                # ── 2. Inbox — paginación manual con screenshot por página ────
                 lg.step("[ 2/4 ] Listando inbox [%s → %s]...", self.since, self.until)
-                items = await list_inbox(
-                    page, creds.ruc,
-                    since=self.since, until=self.until,
-                    limit=50,
+                from playwright.async_api import TimeoutError as _PwTimeout
+
+                await page.wait_for_selector(
+                    SEL_ITEM, state="visible", timeout=30_000
                 )
-                lg.step("       ✓ %d notificación(es) encontradas", len(items))
-                sc = shot_dir / "02_inbox.png"
-                await _screenshot(page, sc)
-                lg.photo("📷 %s", sc.name)
-                self.res_q.put(
-                    ("screenshot", (str(sc), f"02 Inbox — {len(items)} items"))
+                pag = await _get_paginator_state(page)
+                if pag:
+                    lg.info("Paginator: %d–%d de %d total", *pag)
+
+                items: list = []
+                seen_ids: set[str] = set()
+                page_idx = 1
+
+                while page_idx <= DEFAULT_MAX_PAGES:
+                    if self._stop.is_set():
+                        break
+
+                    # Screenshot de esta página del inbox
+                    sc = shot_dir / f"02_inbox_pag{page_idx:02d}.png"
+                    await _screenshot(page, sc)
+                    lg.photo("📷 Inbox pág %d → %s", page_idx, sc.name)
+                    self.res_q.put((
+                        "screenshot",
+                        (str(sc), f"02 Inbox pág {page_idx}"),
+                    ))
+
+                    page_items = await _read_items_in_current_page(
+                        page, creds.ruc, page_idx
+                    )
+                    lg.info(
+                        "  Pág %d: %d items leídos", page_idx, len(page_items)
+                    )
+
+                    added_this_page = 0
+                    for it in page_items:
+                        if self.since and it.fecha < self.since:
+                            lg.info(
+                                "    SKIP (fecha %s < desde %s): %s",
+                                it.fecha, self.since, it.asunto[:45],
+                            )
+                            continue
+                        if self.until and it.fecha > self.until:
+                            lg.info(
+                                "    SKIP (fecha %s > hasta %s): %s",
+                                it.fecha, self.until, it.asunto[:45],
+                            )
+                            continue
+                        if it.notification_id in seen_ids:
+                            continue
+                        seen_ids.add(it.notification_id)
+                        items.append(it)
+                        added_this_page += 1
+                        lg.info(
+                            "    ✓ [%s raw=%r adj=%s] %s",
+                            it.fecha, it.raw_fecha,
+                            it.has_adjuntos, it.asunto[:55],
+                        )
+
+                    lg.info(
+                        "  Pág %d: %d aceptadas / %d leídas",
+                        page_idx, added_this_page, len(page_items),
+                    )
+
+                    if not await _is_next_page_enabled(page):
+                        lg.info("  → Última página alcanzada.")
+                        break
+
+                    # Early termination: todas anteriores al filtro
+                    if (
+                        self.since
+                        and page_items
+                        and all(it.fecha < self.since for it in page_items)
+                    ):
+                        lg.info(
+                            "  → Early stop: pág %d toda anterior a %s",
+                            page_idx, self.since,
+                        )
+                        break
+
+                    await page.locator(SEL_PAG_NEXT).first.click()
+                    try:
+                        await page.wait_for_load_state(
+                            "networkidle", timeout=10_000
+                        )
+                    except _PwTimeout:
+                        pass
+                    page_idx += 1
+
+                lg.step(
+                    "       ✓ %d notificación(es) en %d página(s)",
+                    len(items), page_idx,
                 )
 
                 for it in items:
