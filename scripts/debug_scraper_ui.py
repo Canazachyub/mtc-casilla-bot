@@ -21,6 +21,7 @@ import asyncio
 import logging
 import os
 import queue
+import re
 import sys
 import threading
 from datetime import date, datetime, timedelta
@@ -88,6 +89,76 @@ class _QueueHandler(logging.Handler):
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+def _slug(text: str) -> str:
+    """Convierte texto a nombre de carpeta seguro (sin espacios ni caracteres raros)."""
+    return re.sub(r"[^A-Za-z0-9]", "_", text)[:20].strip("_")
+
+
+def _pick_date(root: tk.Tk, var: tk.StringVar) -> None:
+    """Abre un popup con calendario para seleccionar una fecha y actualiza `var`."""
+    try:
+        from tkcalendar import Calendar
+    except ImportError:
+        messagebox.showinfo(
+            "tkcalendar no instalado",
+            "Ejecutá: uv sync --extra dev",
+        )
+        return
+
+    popup = tk.Toplevel(root)
+    popup.title("Seleccionar fecha")
+    popup.configure(bg=_BG)
+    popup.resizable(False, False)
+
+    try:
+        cur = date.fromisoformat(var.get().strip())
+    except ValueError:
+        cur = date.today()
+
+    cal = Calendar(
+        popup,
+        selectmode="day",
+        year=cur.year, month=cur.month, day=cur.day,
+        date_pattern="yyyy-mm-dd",
+        background=_SURF,
+        foreground=_FG,
+        selectbackground=_PRIMARY,
+        selectforeground=_BG,
+        headersbackground=_BG,
+        headersforeground=_PRIMARY,
+        normalbackground=_SURF,
+        normalforeground=_FG,
+        weekendbackground=_SURF,
+        weekendforeground=_YELLOW,
+        othermonthbackground=_SURF2,
+        othermonthforeground=_SUBTEXT,
+        bordercolor=_SURF2,
+        font=("Consolas", 9),
+    )
+    cal.pack(padx=10, pady=10)
+
+    def _ok() -> None:
+        var.set(cal.get_date())
+        popup.destroy()
+
+    btnf = tk.Frame(popup, bg=_BG)
+    btnf.pack(pady=(0, 10))
+    tk.Button(
+        btnf, text="Aceptar", bg=_PRIMARY, fg=_BG,
+        font=("Consolas", 9, "bold"), relief=tk.FLAT, bd=0, padx=14,
+        command=_ok,
+    ).pack(side=tk.LEFT, padx=4)
+    tk.Button(
+        btnf, text="Cancelar", bg=_SURF2, fg=_FG,
+        font=("Consolas", 8), relief=tk.FLAT, bd=0, padx=10,
+        command=popup.destroy,
+    ).pack(side=tk.LEFT, padx=4)
+
+    popup.transient(root)
+    popup.grab_set()
+    popup.wait_window()
+
+
 async def _screenshot(page: Any, path: Path) -> None:
     """Captura de pantalla silenciosa — nunca aborta el pipeline."""
     try:
@@ -140,6 +211,8 @@ class _ScrapeSession:
 
     async def _run_all(self) -> None:
         lg = logging.getLogger("debug_scraper")
+        # Timestamp único para esta ejecución — todas las casillas de un run comparten carpeta raíz
+        self._run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         n = len(self.creds_list)
         for i, creds in enumerate(self.creds_list):
             if self._stop.is_set():
@@ -168,13 +241,36 @@ class _ScrapeSession:
         )
         from mtc_bot.pdf_pipeline import classify_pdfs
 
+        # ── Estructura de carpetas ────────────────────────────────────────
+        # data/debug_logs/
+        #   └── YYYYMMDD_HHMMSS/          ← timestamp del run (único por ejecución)
+        #       └── EMPRESA__RUC/         ← carpeta por casilla
+        #           ├── 00_sesion.txt     ← metadata legible
+        #           ├── debug.log         ← log completo
+        #           ├── 01_login_ok.png
+        #           ├── 02_inbox_pag01.png
+        #           ├── 02_inbox_pag02.png
+        #           ├── 03_01_detalle.png
+        #           ├── 03_01_adjuntos.png
+        #           └── ...
         shot_dir = (
             _ROOT / "data" / "debug_logs"
-            / datetime.now().strftime("%Y-%m-%d")
-            / creds.ruc
+            / getattr(self, "_run_ts", datetime.now().strftime("%Y%m%d_%H%M%S"))
+            / f"{_slug(creds.empresa)}__{creds.ruc}"
         )
         shot_dir.mkdir(parents=True, exist_ok=True)
         dl_dir = _ROOT / "data" / "debug_downloads" / creds.ruc
+
+        # Metadata legible de la sesión
+        (shot_dir / "00_sesion.txt").write_text(
+            f"Empresa:   {creds.empresa}\n"
+            f"RUC:       {creds.ruc}\n"
+            f"Desde:     {self.since}\n"
+            f"Hasta:     {self.until}\n"
+            f"Modo:      headed={self.headed}, dry_run={self.dry_run}\n"
+            f"Ejecutado: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n",
+            encoding="utf-8",
+        )
 
         # File log para esta casilla
         log_file = shot_dir / "debug.log"
@@ -191,6 +287,8 @@ class _ScrapeSession:
             "Rango: %s → %s | headed=%s | dry_run=%s",
             self.since, self.until, self.headed, self.dry_run,
         )
+        lg.info("📁 Capturas → %s", shot_dir)
+        self.res_q.put(("run_dir", str(shot_dir)))
 
         try:
             async with browser_session(headless=not self.headed) as ctx:
@@ -470,6 +568,7 @@ class DebugApp:
         self._shots: list[tuple[str, str]]           = []
         self._all_rucs: list[Any]                    = []
         self._load_err: str                          = ""
+        self._last_run_dir: str | None               = None   # carpeta del run más reciente
 
         self._load_rucs()
         self._setup_logging()
@@ -591,19 +690,29 @@ class DebugApp:
                 side=tk.LEFT
             )
 
+        cal_kw = dict(bg=_SURF2, fg=_FG, font=("Consolas", 10), relief=tk.FLAT, bd=0, padx=4)
+
         lbl(r1, "Desde:")
         self._since_var = tk.StringVar(value="2026-05-13")
         tk.Entry(
             r1, textvariable=self._since_var, bg=_BG, fg=_FG,
             insertbackground=_FG, font=("Consolas", 9), width=12, relief=tk.FLAT,
-        ).pack(side=tk.LEFT, padx=(4, 12))
+        ).pack(side=tk.LEFT, padx=(4, 2))
+        tk.Button(
+            r1, text="📅", **cal_kw,
+            command=lambda: _pick_date(self.root, self._since_var),
+        ).pack(side=tk.LEFT, padx=(0, 10))
 
         lbl(r1, "Hasta:")
         self._until_var = tk.StringVar(value=date.today().isoformat())
         tk.Entry(
             r1, textvariable=self._until_var, bg=_BG, fg=_FG,
             insertbackground=_FG, font=("Consolas", 9), width=12, relief=tk.FLAT,
-        ).pack(side=tk.LEFT, padx=(4, 14))
+        ).pack(side=tk.LEFT, padx=(4, 2))
+        tk.Button(
+            r1, text="📅", **cal_kw,
+            command=lambda: _pick_date(self.root, self._until_var),
+        ).pack(side=tk.LEFT, padx=(0, 14))
 
         lbl(r1, "Desde rápido:")
         for label, days in [("Hoy", 0), ("Ayer", 1), ("7d", 7), ("14d", 14), ("30d", 30)]:
@@ -819,8 +928,12 @@ class DebugApp:
         self._items.clear()
 
     def _open_log_folder(self) -> None:
-        folder = _ROOT / "data" / "debug_logs"
-        folder.mkdir(parents=True, exist_ok=True)
+        # Abre la carpeta del run más reciente; si no hay ninguna, la raíz debug_logs
+        if self._last_run_dir and Path(self._last_run_dir).exists():
+            folder = Path(self._last_run_dir)
+        else:
+            folder = _ROOT / "data" / "debug_logs"
+            folder.mkdir(parents=True, exist_ok=True)
         if sys.platform == "win32":
             os.startfile(str(folder))
         else:
@@ -877,6 +990,9 @@ class DebugApp:
             self._stop_btn.config(state=tk.DISABLED)
             n = int(self._progress["maximum"])
             self._status_var.set(f"✓ Listo — {n} casilla(s)")
+
+        elif kind == "run_dir":
+            self._last_run_dir = data   # para que "Abrir carpeta" apunte aquí
 
         elif kind == "screenshot":
             path, label = data

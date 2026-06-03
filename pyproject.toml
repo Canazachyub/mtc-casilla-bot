@@ -66,6 +66,7 @@ dev = [
     "respx>=0.21.0",
     "ruff>=0.6.0",
     "mypy>=1.11.0",
+    "tkcalendar>=1.6.1",   # selector de fecha en debug_scraper_ui.py
 ]
 
 [project.scripts]
