@@ -160,6 +160,38 @@ def append_notificacion(
     )
 
 
+def delete_notificacion(
+    sa_json_path: Path,
+    sheet_id: str,
+    tab: str,
+    notification_id: str,
+) -> bool:
+    """Elimina la fila cuyo campo ``id`` coincide con ``notification_id``.
+
+    Args:
+        sa_json_path: path al SA JSON.
+        sheet_id: ID del Sheet.
+        tab: nombre del tab.
+        notification_id: ID a buscar y eliminar.
+
+    Returns:
+        ``True`` si encontró y eliminó la fila, ``False`` si no existía.
+    """
+    client = get_client(sa_json_path)
+    ws = _get_worksheet(client, sheet_id, tab)
+    headers = ws.row_values(1)
+    if "id" not in headers:
+        raise RuntimeError(f"Tab '{tab}' no tiene columna 'id'")
+    id_col_index = headers.index("id") + 1
+    column_values = ws.col_values(id_col_index)  # fila 1 = header
+    for row_num, val in enumerate(column_values, start=1):
+        if val == notification_id:
+            ws.delete_rows(row_num)
+            logger.info("Fila eliminada: tab=%s id=%s (row %d)", tab, notification_id, row_num)
+            return True
+    return False
+
+
 def get_all_notificaciones(
     sa_json_path: Path,
     sheet_id: str,

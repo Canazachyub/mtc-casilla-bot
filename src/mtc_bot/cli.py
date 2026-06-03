@@ -496,6 +496,7 @@ async def _process_notification(  # noqa: PLR0911,PLR0912,PLR0913,PLR0915 — pi
     settings,
     downloads_root,
     shots_dir=None,
+    overwrite: bool = False,
 ) -> bool:
     """Procesa UNA notificación end-to-end.
 
@@ -518,7 +519,11 @@ async def _process_notification(  # noqa: PLR0911,PLR0912,PLR0913,PLR0915 — pi
     from mtc_bot.ai_extractor import AIExtractionFailed
     from mtc_bot.ai_extractor import extract as ai_extract
     from mtc_bot.google.drive_uploader import upload_pdf
-    from mtc_bot.google.sheets_writer import append_notificacion, notification_exists
+    from mtc_bot.google.sheets_writer import (
+        append_notificacion,
+        delete_notificacion,
+        notification_exists,
+    )
     from mtc_bot.pdf_pipeline import extract_text, merge_pdfs, rename_merged
     from mtc_bot.scraper.downloader import (
         download_attachments,
@@ -531,14 +536,23 @@ async def _process_notification(  # noqa: PLR0911,PLR0912,PLR0913,PLR0915 — pi
 
     # 1) Idempotencia
     try:
-        if notification_exists(
+        exists = notification_exists(
             settings.google_service_account_json,
             settings.sheet_id,
             settings.sheet_tab_notificaciones,
             sheet_id_value,
-        ):
+        )
+        if exists and not overwrite:
             console.print(f"    [yellow]⊝[/yellow] {asunto_short} — ya procesada (skip)")
             return False
+        if exists and overwrite:
+            delete_notificacion(
+                settings.google_service_account_json,
+                settings.sheet_id,
+                settings.sheet_tab_notificaciones,
+                sheet_id_value,
+            )
+            console.print(f"    [yellow]↻[/yellow] {asunto_short} — sobreescribiendo")
     except Exception as exc:  # noqa: BLE001 — no abortar batch por error de Sheet
         console.print(f"    [red]✗[/red] {asunto_short}: idempotencia check falló: {exc}")
         return False
@@ -714,6 +728,7 @@ async def _process_one_ruc(  # noqa: PLR0913 — función privada del CLI
     headless: bool,
     downloads_root_base,
     settings,
+    overwrite: bool = False,
 ) -> tuple[int, int]:
     """Procesa un RUC. Devuelve ``(items_listados, items_completados)``.
 
@@ -765,6 +780,7 @@ async def _process_one_ruc(  # noqa: PLR0913 — función privada del CLI
                     settings,
                     downloads_root,
                     shots_dir=shots_dir if not headless else None,
+                    overwrite=overwrite,
                 )
                 if ok:
                     completados += 1
@@ -797,6 +813,13 @@ def run_cmd(
     dry_run: Annotated[
         bool,
         typer.Option("--dry-run", help="Solo lista; no descarga PDFs."),
+    ] = False,
+    overwrite: Annotated[
+        bool,
+        typer.Option(
+            "--overwrite",
+            help="Sobreescribir notificaciones ya procesadas: borra la fila existente y reprocesa completa.",
+        ),
     ] = False,
 ) -> None:
     """Ciclo end-to-end completo de Fase 1.
@@ -846,6 +869,7 @@ def run_cmd(
                         headless,
                         downloads_root_base,
                         settings,
+                        overwrite=overwrite,
                     )
                     last_exc = None
                     break  # éxito — salir del loop de reintentos
