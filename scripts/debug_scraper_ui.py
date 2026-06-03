@@ -348,30 +348,34 @@ class _ScrapeSession:
                         "  Pág %d: %d items leídos", page_idx, len(page_items)
                     )
 
+                    # ── Tabla de verificación de fechas ─────────────────────
+                    lg.step("  📅 Fechas pág %d — %d items:", page_idx, len(page_items))
+                    for j, it in enumerate(page_items, 1):
+                        if it.fecha == date.min:
+                            tag = "⚠ NO PARSEADA  ← revisar _parse_fecha_dmy"
+                        elif self.since and it.fecha < self.since:
+                            tag = f"✗ anterior a {self.since}  (SKIP)"
+                        elif self.until and it.fecha > self.until:
+                            tag = f"✗ posterior a {self.until}  (SKIP)"
+                        else:
+                            tag = "✓ EN RANGO"
+                        lg.info(
+                            "    #%02d  raw:%-22r  →  parsed:%s  adj:%-5s  %s",
+                            j, it.raw_fecha, it.fecha, str(it.has_adjuntos), tag,
+                        )
+
+                    # ── Filtrar y acumular ───────────────────────────────────
                     added_this_page = 0
                     for it in page_items:
                         if self.since and it.fecha < self.since:
-                            lg.info(
-                                "    SKIP (fecha %s < desde %s): %s",
-                                it.fecha, self.since, it.asunto[:45],
-                            )
                             continue
                         if self.until and it.fecha > self.until:
-                            lg.info(
-                                "    SKIP (fecha %s > hasta %s): %s",
-                                it.fecha, self.until, it.asunto[:45],
-                            )
                             continue
                         if it.notification_id in seen_ids:
                             continue
                         seen_ids.add(it.notification_id)
                         items.append(it)
                         added_this_page += 1
-                        lg.info(
-                            "    ✓ [%s raw=%r adj=%s] %s",
-                            it.fecha, it.raw_fecha,
-                            it.has_adjuntos, it.asunto[:55],
-                        )
 
                     lg.info(
                         "  Pág %d: %d aceptadas / %d leídas",
@@ -501,11 +505,42 @@ class _ScrapeSession:
                     pdf_rows: list[tuple[str, str, int]] = []
                     if pdfs:
                         classified = classify_pdfs([p.path for p in pdfs])
-                        lg.step("  Clasificación de PDFs:")
-                        for cpdf in classified:
+
+                        # ── Clasificación (orden de descarga) ────────────────
+                        lg.step("  Clasificación (orden de descarga del portal):")
+                        for i_pdf, cpdf in enumerate(classified, 1):
                             sz = cpdf.path.stat().st_size
-                            lg.info("    %-44s  →  %s", cpdf.path.name, cpdf.role)
+                            lg.info(
+                                "    %d. %-44s  →  %-28s  (%s bytes)",
+                                i_pdf, cpdf.path.name, cpdf.role, f"{sz:,}",
+                            )
                             pdf_rows.append((cpdf.path.name, cpdf.role, sz))
+
+                        # ── Orden de merge (orden en el PDF final) ───────────
+                        from mtc_bot.pdf_pipeline import _MERGE_ORDER as _MO
+                        sorted_merge = sorted(
+                            classified,
+                            key=lambda c: (_MO.get(c.role, 5), c.path.name),
+                        )
+                        n_m = len(sorted_merge)
+                        lg.step("  Orden de merge (cómo quedará el PDF final):")
+                        for pos, cpdf in enumerate(sorted_merge, 1):
+                            if pos == n_m:
+                                suffix = "← ÚLTIMO (constancia lectura)"
+                            elif pos == n_m - 1 and n_m > 1:
+                                suffix = "← penúltimo (constancia notif.)"
+                            elif cpdf.role == "documento_principal":
+                                suffix = "← PRIMERO"
+                            else:
+                                suffix = ""
+                            lg.info(
+                                "    %d. %-44s  [%-28s]  %s",
+                                pos, cpdf.path.name, cpdf.role, suffix,
+                            )
+                        self.res_q.put(("merge_order", (
+                            item.notification_id,
+                            [(c.path.name, c.role) for c in sorted_merge],
+                        )))
 
                         roles = {c.role for c in classified}
                         if "constancia_lectura" not in roles:
@@ -548,6 +583,99 @@ class _ScrapeSession:
         finally:
             lg.removeHandler(fh)
             fh.close()
+
+
+async def _run_ai_test(
+    log_q: "queue.Queue[tuple[str, str]]",
+    res_q: "queue.Queue[tuple[str, Any]]",
+) -> None:
+    """Prueba la conexión a DeepSeek y Gemini con un ping mínimo."""
+    import json as _json
+    import time
+
+    import httpx as _httpx
+    from openai import AsyncOpenAI
+
+    lg = logging.getLogger("debug_ai")
+    lg.step("══ Test de conexión IA ══")
+
+    try:
+        from mtc_bot.config import get_settings
+        settings = get_settings()
+    except Exception as exc:
+        lg.error("Settings no cargados: %s", exc)
+        res_q.put(("done_ai_test", None))
+        return
+
+    # ── DeepSeek ────────────────────────────────────────────────────────────
+    lg.step("► DeepSeek")
+    lg.info("  modelo : %s", settings.deepseek_model)
+    lg.info("  base_url: %s", settings.deepseek_base_url)
+    try:
+        client = AsyncOpenAI(
+            api_key=settings.deepseek_api_key.get_secret_value(),
+            base_url=settings.deepseek_base_url,
+        )
+        t0 = time.monotonic()
+        resp = await client.chat.completions.create(
+            model=settings.deepseek_model,
+            messages=[{
+                "role": "user",
+                "content": 'Responde SOLO con JSON: {"status":"ok","provider":"deepseek"}',
+            }],
+            temperature=0,
+            max_tokens=30,
+            timeout=15.0,
+        )
+        elapsed = time.monotonic() - t0
+        content = (resp.choices[0].message.content or "").strip()
+        try:
+            parsed = _json.loads(content)
+            lg.step("  ✓ DeepSeek OK  %.1fs  →  %s", elapsed, parsed)
+        except Exception:
+            lg.step("  ✓ DeepSeek OK  %.1fs  →  %s", elapsed, content[:80])
+        res_q.put(("ai_result", ("DeepSeek", True, f"OK en {elapsed:.1f}s")))
+    except Exception as exc:
+        lg.error("  ✗ DeepSeek FALLÓ: %s", exc)
+        res_q.put(("ai_result", ("DeepSeek", False, str(exc)[:100])))
+
+    # ── Gemini ───────────────────────────────────────────────────────────────
+    lg.step("► Gemini")
+    lg.info("  modelo : %s", settings.gemini_model)
+    try:
+        url = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{settings.gemini_model}:generateContent"
+        )
+        body = {
+            "contents": [{"parts": [{"text": (
+                'Responde SOLO con JSON: {"status":"ok","provider":"gemini"}'
+            )}]}],
+            "generationConfig": {"temperature": 0, "maxOutputTokens": 30},
+        }
+        t0 = time.monotonic()
+        async with _httpx.AsyncClient(timeout=15.0) as hcl:
+            r = await hcl.post(
+                url,
+                params={"key": settings.gemini_api_key.get_secret_value()},
+                json=body,
+            )
+            r.raise_for_status()
+        elapsed = time.monotonic() - t0
+        data = r.json()
+        text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        try:
+            parsed = _json.loads(text)
+            lg.step("  ✓ Gemini OK  %.1fs  →  %s", elapsed, parsed)
+        except Exception:
+            lg.step("  ✓ Gemini OK  %.1fs  →  %s", elapsed, text[:80])
+        res_q.put(("ai_result", ("Gemini", True, f"OK en {elapsed:.1f}s")))
+    except Exception as exc:
+        lg.error("  ✗ Gemini FALLÓ: %s", exc)
+        res_q.put(("ai_result", ("Gemini", False, str(exc)[:100])))
+
+    lg.step("══ Test IA completado ══")
+    res_q.put(("done_ai_test", None))
 
 
 # ── Tkinter App ───────────────────────────────────────────────────────────────
@@ -762,6 +890,13 @@ class DebugApp:
             command=self._clear,
         ).pack(side=tk.LEFT, padx=4)
 
+        self._ai_btn = tk.Button(
+            r2, text="🤖 Test IA", bg="#1a2a3a", fg=_PRIMARY,
+            font=("Consolas", 8, "bold"), relief=tk.FLAT, bd=0, padx=10,
+            command=self._test_ai,
+        )
+        self._ai_btn.pack(side=tk.LEFT, padx=(8, 4))
+
         # Progress bar + status
         pf = tk.Frame(r2, bg=_SURF)
         pf.pack(side=tk.RIGHT)
@@ -916,6 +1051,16 @@ class DebugApp:
         self._status_var.set("Deteniendo…")
         self._stop_btn.config(state=tk.DISABLED)
 
+    def _test_ai(self) -> None:
+        """Lanza el test de DeepSeek y Gemini en un hilo de fondo."""
+        self._ai_btn.config(state=tk.DISABLED, text="🤖 Testeando…")
+        threading.Thread(
+            target=lambda: asyncio.run(
+                _run_ai_test(self._log_q, self._res_q)
+            ),
+            daemon=True, name="ai-test",
+        ).start()
+
     def _clear(self) -> None:
         for w in (self._log_txt, self._pdf_txt):
             w.config(state=tk.NORMAL)
@@ -992,7 +1137,49 @@ class DebugApp:
             self._status_var.set(f"✓ Listo — {n} casilla(s)")
 
         elif kind == "run_dir":
-            self._last_run_dir = data   # para que "Abrir carpeta" apunte aquí
+            self._last_run_dir = data
+
+        elif kind == "done_ai_test":
+            self._ai_btn.config(state=tk.NORMAL, text="🤖 Test IA")
+
+        elif kind == "ai_result":
+            provider, ok, msg = data
+            icon = "✓" if ok else "✗"
+            color = _GREEN if ok else _RED
+            self._pdf_txt.config(state=tk.NORMAL)
+            self._pdf_txt.insert(
+                tk.END, f"\n  {icon} {provider}: {msg}\n",
+                "ok" if ok else "warn",
+            )
+            self._pdf_txt.config(state=tk.DISABLED)
+
+        elif kind == "merge_order":
+            notif_id, order = data
+            asunto = self._items.get(notif_id, {}).get("asunto", notif_id[:8])
+            self._pdf_txt.config(state=tk.NORMAL)
+            self._pdf_txt.insert(
+                tk.END, f"\n  📋 Merge order — {asunto[:50]}\n", "head"
+            )
+            n = len(order)
+            for pos, (fname, role) in enumerate(order, 1):
+                if pos == n:
+                    suffix = " ← ÚLTIMO"
+                elif pos == n - 1 and n > 1:
+                    suffix = " ← penúltimo"
+                elif role == "documento_principal":
+                    suffix = " ← PRIMERO"
+                else:
+                    suffix = ""
+                color = "ok" if role in (
+                    "documento_principal", "constancia_notificacion", "constancia_lectura"
+                ) else "neutral"
+                self._pdf_txt.insert(
+                    tk.END,
+                    f"  {pos}. {fname:<42}  [{role}]{suffix}\n",
+                    color,
+                )
+            self._pdf_txt.config(state=tk.DISABLED)
+            self._pdf_txt.see(tk.END)
 
         elif kind == "screenshot":
             path, label = data
