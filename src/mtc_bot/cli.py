@@ -594,12 +594,28 @@ async def _process_notification(  # noqa: PLR0911,PLR0912,PLR0913,PLR0915 — pi
 
     # 6) Extract text
     try:
-        texto = extract_text(merged_path)
+        pdf_text = extract_text(merged_path)
     except FileNotFoundError as exc:
         console.print(f"    [red]✗[/red] {asunto_short}: extract_text falló: {exc}")
         return False
 
-    # 7) IA
+    # 7) IA — combinar metadata del portal + cuerpo HTML + texto PDF
+    #    El cuerpo HTML es siempre texto limpio; el PDF puede ser escaneado.
+    #    Dar ambas fuentes al modelo mejora: documento, emisor, fundamento legal,
+    #    tipo_acto, plazo y casilla_origen.
+    portal_ctx = (
+        "=== METADATA DEL PORTAL MTC ===\n"
+        f"Emisor: {detail_md.emisor}\n"
+        f"Categoría: {detail_md.categoria}\n"
+        f"Asunto: {detail_md.asunto or item.asunto}\n"
+        f"Fecha de notificación: {detail_md.fecha_full}\n"
+    )
+    if detail_md.cuerpo.strip():
+        portal_ctx += f"\n=== MENSAJE DEL PORTAL (siempre texto limpio) ===\n{detail_md.cuerpo.strip()}\n"
+    if pdf_text.strip():
+        portal_ctx += f"\n=== TEXTO DEL PDF ADJUNTO ===\n{pdf_text}"
+    texto = portal_ctx
+
     try:
         console.print(f"    [ai] {asunto_short}...")
         extraction = await ai_extract(texto, settings)

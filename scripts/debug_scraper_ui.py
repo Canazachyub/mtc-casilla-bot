@@ -586,6 +586,50 @@ class _ScrapeSession:
 
                     self.res_q.put(("item_pdfs", (item.notification_id, pdf_rows)))
 
+                    # ── Contexto IA (lo que se mandará al modelo) ────────────
+                    if pdfs:
+                        from mtc_bot.pdf_pipeline import merge_pdfs, extract_text
+                        try:
+                            merged = dest / "merged_debug.pdf"
+                            merge_pdfs([p.path for p in pdfs], merged)
+                            pdf_text = extract_text(merged)
+                        except Exception as exc:
+                            pdf_text = ""
+                            lg.warning("  extract_text falló: %s", exc)
+
+                        portal_ctx = (
+                            "=== METADATA DEL PORTAL MTC ===\n"
+                            f"Emisor: {meta.emisor}\n"
+                            f"Categoría: {meta.categoria}\n"
+                            f"Asunto: {meta.asunto or item.asunto}\n"
+                            f"Fecha: {meta.fecha_full}\n"
+                        )
+                        if meta.cuerpo.strip():
+                            portal_ctx += (
+                                f"\n=== MENSAJE DEL PORTAL (texto limpio) ===\n"
+                                f"{meta.cuerpo.strip()}\n"
+                            )
+                        if pdf_text.strip():
+                            portal_ctx += f"\n=== TEXTO DEL PDF ADJUNTO ===\n{pdf_text[:3000]}"
+                            if len(pdf_text) > 3000:
+                                portal_ctx += f"\n... [truncado — {len(pdf_text):,} chars totales]"
+
+                        lg.step("  Contexto IA (lo que recibirá DeepSeek/Gemini):")
+                        lg.info("  Metadata portal: %d chars", len(portal_ctx) - len(pdf_text))
+                        lg.info("  PDF texto: %d chars", len(pdf_text))
+                        lg.info("  Total combinado: %d chars", len(portal_ctx))
+                        lg.info("  ── PREVIEW ─────────────────────────────────────────")
+                        for line in portal_ctx[:800].splitlines():
+                            lg.info("  %s", line)
+                        if len(portal_ctx) > 800:
+                            lg.info("  ... [continúa — ver log completo]")
+
+                        # Guardar el contexto completo en archivo para revisión
+                        ctx_file = dest / "contexto_ia.txt"
+                        ctx_file.write_text(portal_ctx, encoding="utf-8")
+                        lg.info("  Contexto IA completo guardado: %s", ctx_file.name)
+                        self.res_q.put(("ia_context", (item.notification_id, str(ctx_file), len(portal_ctx))))
+
                     # Volver al inbox
                     try:
                         await page.go_back()
@@ -1180,6 +1224,28 @@ class DebugApp:
                 "ok" if ok else "warn",
             )
             self._pdf_txt.config(state=tk.DISABLED)
+
+        elif kind == "ia_context":
+            notif_id, ctx_file, total_chars = data
+            asunto = self._items.get(notif_id, {}).get("asunto", notif_id[:8])
+            self._pdf_txt.config(state=tk.NORMAL)
+            self._pdf_txt.insert(tk.END, f"\n  🤖 Contexto IA — {asunto[:50]}\n", "head")
+            self._pdf_txt.insert(
+                tk.END,
+                f"  Total: {total_chars:,} chars  |  archivo: {Path(ctx_file).name}\n",
+                "neutral",
+            )
+            # Mostrar primeras líneas del archivo
+            try:
+                lines = Path(ctx_file).read_text(encoding="utf-8").splitlines()[:20]
+                for ln in lines:
+                    self._pdf_txt.insert(tk.END, f"  {ln}\n", "neutral")
+                if total_chars > 800:
+                    self._pdf_txt.insert(tk.END, "  ...\n", "neutral")
+            except Exception:
+                pass
+            self._pdf_txt.config(state=tk.DISABLED)
+            self._pdf_txt.see(tk.END)
 
         elif kind == "merge_order":
             notif_id, order = data
