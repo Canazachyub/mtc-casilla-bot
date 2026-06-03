@@ -398,13 +398,41 @@ class _ScrapeSession:
                         )
                         break
 
+                    pag_before = await _get_paginator_state(page)
                     await page.locator(SEL_PAG_NEXT).first.click()
-                    try:
-                        await page.wait_for_load_state(
-                            "networkidle", timeout=10_000
+
+                    # Esperar que el rango del paginator cambie antes de leer
+                    # los nuevos items — evita leer la página anterior cuando
+                    # Angular todavía no actualizó el DOM.
+                    if pag_before:
+                        start_before = pag_before[0]
+                        lg.info(
+                            "  → Navegando pág %d→%d (paginator actual: %d–%d)...",
+                            page_idx, page_idx + 1, pag_before[0], pag_before[1],
                         )
-                    except _PwTimeout:
-                        pass
+                        for _w in range(80):   # hasta 8 segundos
+                            await asyncio.sleep(0.1)
+                            pag_now = await _get_paginator_state(page)
+                            if pag_now and pag_now[0] != start_before:
+                                lg.info(
+                                    "  ✓ Paginator actualizado: %d–%d → %d–%d",
+                                    start_before, pag_before[1],
+                                    pag_now[0], pag_now[1],
+                                )
+                                break
+                        else:
+                            lg.warning(
+                                "  ⚠ Paginator no cambió en 8s — "
+                                "posible página duplicada o portal lento"
+                            )
+                    else:
+                        try:
+                            await page.wait_for_load_state(
+                                "networkidle", timeout=10_000
+                            )
+                        except _PwTimeout:
+                            pass
+
                     page_idx += 1
 
                 lg.step(

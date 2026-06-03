@@ -234,6 +234,63 @@ async def _read_items_in_current_page(
 # ─────────────────────────────────────────────────────────────────
 
 
+async def _wait_paginator_changed(
+    page: Page,
+    pag_before: tuple[int, int, int] | None,
+    current_page_index: int,
+    *,
+    max_wait_s: float = 8.0,
+    poll_s: float = 0.1,
+) -> None:
+    """Espera que el label del paginator cambie su rango de inicio.
+
+    Angular actualiza el DOM de forma asíncrona después del click en Next.
+    ``networkidle`` dispara antes de que los nuevos items rendericen, lo que
+    causa que se lean los items viejos de la página anterior.
+
+    Esperamos que el campo "start" del paginator (ej. ``1`` → ``26``) cambie,
+    lo cual es la señal definitiva de que los nuevos items ya están en el DOM.
+    Si no hay paginator visible o ya cambió, retorna de inmediato.
+
+    Args:
+        page: Page del inbox.
+        pag_before: resultado de ``_get_paginator_state`` justo antes del click.
+        current_page_index: número de página (para logging).
+        max_wait_s: tiempo máximo de espera en segundos.
+        poll_s: intervalo entre lecturas del paginator.
+    """
+    import asyncio as _asyncio
+
+    if pag_before is None:
+        # Sin paginator visible: fallback al networkidle original
+        try:
+            await page.wait_for_load_state(
+                "networkidle", timeout=int(_DEFAULT_PAGINATOR_TIMEOUT)
+            )
+        except PlaywrightTimeoutError:
+            pass
+        return
+
+    start_before = pag_before[0]
+    iterations = int(max_wait_s / poll_s)
+    for _ in range(iterations):
+        await _asyncio.sleep(poll_s)
+        pag_now = await _get_paginator_state(page)
+        if pag_now and pag_now[0] != start_before:
+            logger.debug(
+                "Paginator cambió: %d–%d → %d–%d (pág %d→%d)",
+                pag_before[0], pag_before[1],
+                pag_now[0], pag_now[1],
+                current_page_index, current_page_index + 1,
+            )
+            return
+    logger.warning(
+        "Paginator no cambió tras %.1fs (pág %d, start=%d) — "
+        "posible página duplicada o portal lento",
+        max_wait_s, current_page_index, start_before,
+    )
+
+
 async def list_inbox(
     page: Page,
     ruc: str,
@@ -303,11 +360,9 @@ async def list_inbox(
             logger.debug("Early stop: pág %d toda anterior a %s", page_index, since)
             break
 
+        pag_before = await _get_paginator_state(page)
         await page.locator(SEL_PAG_NEXT).first.click()
-        try:
-            await page.wait_for_load_state("networkidle", timeout=_DEFAULT_PAGINATOR_TIMEOUT)
-        except PlaywrightTimeoutError:
-            logger.debug("networkidle timeout pasando de página %d", page_index)
+        await _wait_paginator_changed(page, pag_before, page_index)
         page_index += 1
 
     logger.info("list_inbox recolectó %d items en %d página(s)", len(all_items), page_index)
