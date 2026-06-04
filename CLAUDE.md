@@ -204,12 +204,13 @@ uv run ruff check src/ && uv run ruff format src/
 | 2026-05-13 | OAuth User Delegation para Drive uploads | Service Account no tiene storage quota; usuario OAuth sí |
 | 2026-05-13 | `tzdata` como dep explícita en pyproject.toml | Windows no incluye IANA tz data; `ZoneInfo("America/Lima")` falla sin él |
 | 2026-05-13 | `date.min` fallback para fechas no parseables en inbox | Evita que items con fecha vacía pasen el filtro `--since today` |
+| 2026-06-04 | `click_item` espera título de detalle con texto único del item nuevo | En headless, `wait_for_selector(title)` retorna con título del item anterior; el fix usa `locator.filter(has_text=unique_text)` para evitar descargar PDFs equivocados |
 
 ## 11. Estado actual
 
 > **Actualizar al final de cada sesión.**
 
-**Fase actual:** Fase 1 ✅ verificada y estabilizada (2026-06-03)
+**Fase actual:** Fase 1 ✅ + feature informe (2026-06-04)
 **Próximo paso:** QA pass formal → Fase 2 (plantillas + propuestas de respuesta).
 
 **Hitos Fase 0 — completados (2026-04-28):**
@@ -230,7 +231,8 @@ uv run ruff check src/ && uv run ruff format src/
 - [x] Frontend: edición inline de `emisor`, `plazo_dias_habiles`, `plazo_vencimiento`
 - [x] `scripts/debug_scraper_ui.py`: GUI Tkinter para verificación día a día
 - [x] 9 casillas verificadas con debug tool (13/05→03/06/2026) — sin errores de fecha/PDFs
-- [x] Run completo con `--overwrite` exitoso: 9 notifs procesadas, Sheet actualizado
+- [x] Run completo con `--overwrite` exitoso: 10 notifs procesadas, Sheet actualizado
+- [x] Fix crítico: 2ª notificación ya no descarga PDFs de la 1ª (bug Angular headless)
 - [ ] `obsidian_writer.py` — diferido a Fase 2
 - [ ] Tests ≥70% coverage — pendiente QA pass formal
 
@@ -240,6 +242,19 @@ uv run ruff check src/ && uv run ruff format src/
 - `ai_extractor.py` (input): combina metadata portal + cuerpo HTML + PDF texto
 - `debug_scraper_ui.py`: GUI completa con calendarios, capturas por página, test IA,
   tabla de fechas por pág, orden de merge, preview contexto IA, carpetas timestampeadas
+
+**Mejoras aplicadas en sesión 2026-06-04:**
+- `inbox.py` `click_item`: bug crítico — 2ª notificación descargaba PDFs de la 1ª.
+  Causa: `wait_for_selector(SEL_DETAIL_TITLE)` retornaba con el título anterior visible.
+  Fix: `page.locator(SEL_DETAIL_TITLE).filter(has_text=unique_text).wait_for(visible)` —
+  espera que el título del detalle contenga el número/texto único del item nuevo.
+  Verificado con `--overwrite` completo: 10 notifs con PDFs y constancias distintos.
+- Feature `informe`: nuevo campo `informe` en Sheet + frontend. Gemini (contexto 1M)
+  primario → DeepSeek fallback. `pdf_pipeline.extract_text(max_pages=None)` para texto
+  completo. `_gemini_auth()` detecta formato `AQ.` vs `AIzaSy` automáticamente.
+  Gemini bloqueado por account type (cuenta institucional edu); DeepSeek fallback OK.
+- `frontend/app.js`: `renderMarkdown()` propio + sección "🧾 Informe IA" colapsable.
+- Sheet: columna `informe` añadida manualmente.
 
 **Pendientes para Fase 2:**
 1. QA pass formal de Fase 1 (ruff + pytest + security scan).

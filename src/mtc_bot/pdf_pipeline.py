@@ -323,7 +323,7 @@ def _try_ocr(pdf_path: Path, max_pages: int) -> str:
 # Función principal de extracción
 # ─────────────────────────────────────────────────────────────────
 
-def extract_text(pdf_path: Path, max_pages: int = 30) -> str:
+def extract_text(pdf_path: Path, max_pages: int | None = 30) -> str:
     """Extrae texto del PDF unido para enviarlo a la IA.
 
     Estrategia:
@@ -335,7 +335,7 @@ def extract_text(pdf_path: Path, max_pages: int = 30) -> str:
 
     Args:
         pdf_path: PDF a procesar (el merged que incluye los 3 PDFs).
-        max_pages: tope defensivo. PDFs más largos se truncan.
+        max_pages: tope defensivo. ``None`` = sin límite (para informe completo).
 
     Returns:
         Texto plano concatenado, separado por ``"\\n\\n--- Página N ---\\n\\n"``.
@@ -352,14 +352,14 @@ def extract_text(pdf_path: Path, max_pages: int = 30) -> str:
 
     with pdfplumber.open(pdf_path) as pdf:
         total_pages = len(pdf.pages)
-        if total_pages > max_pages:
+        if max_pages is not None and total_pages > max_pages:
             logger.warning(
                 "PDF con %d páginas, truncando a %d (path=%s)",
                 total_pages,
                 max_pages,
                 pdf_path.name,
             )
-        limit = min(total_pages, max_pages)
+        limit = total_pages if max_pages is None else min(total_pages, max_pages)
 
         for idx in range(limit):
             try:

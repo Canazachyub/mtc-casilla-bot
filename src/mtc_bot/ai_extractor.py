@@ -68,6 +68,55 @@ class AIExtractionFailed(Exception):
     """Tanto DeepSeek como Gemini fallaron. El caller decide qué hacer."""
 
 
+_SYSTEM_PROMPT_INFORME = (
+    "Eres un asistente legal experto en notificaciones electrónicas del Perú. "
+    "Genera informes profesionales estructurados en Markdown sobre documentos oficiales "
+    "de SUTRAN, MTC y otras entidades regulatorias. Sé conciso pero completo."
+)
+
+_INFORME_PROMPT_TEMPLATE = """\
+Genera un informe profesional en Markdown sobre esta notificación oficial peruana.
+Usa EXACTAMENTE estas secciones (omite las que no apliquen al documento):
+
+## Tipo de documento
+<tipo: CARTA, OFICIO, RESOLUCIÓN COACTIVA, ACTA DE INSPECCIÓN, etc. + número completo>
+
+## Materia
+<1-2 párrafos explicando de qué trata el documento y su contexto>
+
+## Hechos relevantes
+- <hecho 1>
+- <hecho 2>
+(máximo 6 hechos concretos, con fechas y referencias si las hay)
+
+## Infracciones o incumplimientos detectados
+- <descripción concisa> (art. y norma si se menciona)
+(omitir sección si el documento no describe infracciones)
+
+## Plazos y fechas clave
+- Plazo para respuesta/descargo: X días hábiles (si aplica)
+- Fecha límite estimada: DD/MM/YYYY
+- Otras fechas importantes mencionadas
+
+## Monto en riesgo
+<monto de multa, UIT o deuda si se menciona; "No especificado" si no aplica>
+
+## Documentos requeridos en la respuesta
+1. <documento 1>
+2. <documento 2>
+(omitir sección si no se piden documentos)
+
+## Observación clave para la respuesta
+<1-2 oraciones con el punto más crítico que debe tenerse en cuenta al redactar la respuesta>
+
+TEXTO DE LA NOTIFICACIÓN:
+\"\"\"
+{texto}
+\"\"\"
+
+INFORME:"""
+
+
 _SYSTEM_PROMPT = (
     "Eres un asistente legal experto en notificaciones electrónicas del Ministerio "
     "de Transportes y Comunicaciones del Perú (MTC) y SUTRAN. Tu tarea es leer el "
@@ -142,6 +191,17 @@ TEXTO DE LA NOTIFICACIÓN:
 \"\"\"
 
 JSON:"""
+
+
+def _gemini_auth(api_key: str) -> tuple[dict, dict]:
+    """Devuelve (params, headers) según el formato de la key de Gemini.
+
+    - Keys ``AIzaSy...`` → query param ``?key=``.
+    - Keys ``AQ.``       → header ``x-goog-api-key`` (nuevo formato Google AI Studio).
+    """
+    if api_key.startswith("AQ."):
+        return {}, {"x-goog-api-key": api_key}
+    return {"key": api_key}, {}
 
 
 def _truncate(texto: str) -> str:
@@ -241,13 +301,10 @@ async def extract_with_gemini(
         },
     }
 
+    params, headers = _gemini_auth(settings.gemini_api_key.get_secret_value())
     logger.info("Extrayendo de %d caracteres con Gemini", len(texto))
     async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.post(
-            url,
-            params={"key": settings.gemini_api_key.get_secret_value()},
-            json=body,
-        )
+        resp = await client.post(url, params=params, headers=headers, json=body)
         resp.raise_for_status()
         payload = resp.json()
 
@@ -315,3 +372,75 @@ async def extract(texto: str, settings: Settings | None = None) -> ExtractionRes
             gemini_error,
         )
         raise AIExtractionFailed(f"DeepSeek: {deepseek_error} | Gemini: {gemini_error}") from exc
+
+
+async def extract_informe(
+    texto: str,
+    settings: Settings | None = None,
+    timeout: float = 120.0,
+) -> str:
+    """Genera un informe estructurado en Markdown usando Gemini (contexto completo).
+
+    A diferencia de ``extract()``, NO trunca el texto — Gemini soporta hasta 1M tokens,
+    adecuado para PDFs de 40+ páginas. Falla silenciosamente: devuelve cadena vacía
+    si Gemini falla, sin interrumpir el pipeline.
+
+    Args:
+        texto: texto completo del PDF (sin truncar).
+        settings: Settings inyectables (default: ``get_settings()``).
+        timeout: timeout en segundos.
+
+    Returns:
+        Informe en Markdown. Cadena vacía si Gemini falla.
+    """
+    cfg = settings or get_settings()
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{cfg.gemini_model}:generateContent"
+    )
+    body = {
+        "system_instruction": {"parts": [{"text": _SYSTEM_PROMPT_INFORME}]},
+        "contents": [{"parts": [{"text": _INFORME_PROMPT_TEMPLATE.format(texto=texto)}]}],
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 2048,
+        },
+    }
+
+    params, headers = _gemini_auth(cfg.gemini_api_key.get_secret_value())
+    logger.info("Generando informe con Gemini (%d chars)", len(texto))
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(url, params=params, headers=headers, json=body)
+            resp.raise_for_status()
+            payload = resp.json()
+        informe = payload["candidates"][0]["content"]["parts"][0]["text"]
+        logger.info("Informe Gemini OK (%d chars)", len(informe))
+        return informe.strip()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Gemini informe falló (%s) — intentando con DeepSeek", type(exc).__name__)
+
+    # Fallback: DeepSeek con texto truncado (no tiene contexto de 1M pero cubre la mayoría)
+    texto_ds = _truncate(texto)
+    try:
+        client_ds = AsyncOpenAI(
+            api_key=cfg.deepseek_api_key.get_secret_value(),
+            base_url=cfg.deepseek_base_url,
+        )
+        logger.info("Generando informe con DeepSeek (%d chars)", len(texto_ds))
+        resp_ds = await client_ds.chat.completions.create(
+            model=cfg.deepseek_model,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT_INFORME},
+                {"role": "user", "content": _INFORME_PROMPT_TEMPLATE.format(texto=texto_ds)},
+            ],
+            temperature=0.2,
+            max_tokens=2048,
+            timeout=timeout,
+        )
+        informe = resp_ds.choices[0].message.content or ""
+        logger.info("Informe DeepSeek OK (%d chars)", len(informe))
+        return informe.strip()
+    except Exception as exc2:  # noqa: BLE001
+        logger.warning("DeepSeek informe también falló (%s) — informe omitido", type(exc2).__name__)
+        return ""

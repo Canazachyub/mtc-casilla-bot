@@ -901,6 +901,46 @@ tbody tr.row-alerta:hover { background: rgba(245,158,11,0.06); }
 }
 .re-val { line-height: 1.5; }
 
+/* ─── Informe IA ─── */
+.informe-details {
+  background: var(--bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  margin-bottom: 0.75rem;
+  overflow: hidden;
+}
+.informe-details summary.section-heading {
+  padding: 0.6rem 1rem;
+  background: rgba(59,130,246,0.06);
+  border-bottom: 1px solid var(--border-subtle);
+  margin: 0;
+}
+.informe-details[open] summary.section-heading { border-bottom: 1px solid var(--border-subtle); }
+.informe-toggle-icon { margin-left: auto; transition: transform 0.2s; }
+.informe-details:not([open]) .informe-toggle-icon { transform: rotate(-90deg); }
+.informe-body {
+  padding: 0.9rem 1.1rem 0.7rem;
+  font-size: 0.875rem;
+  line-height: 1.65;
+}
+.informe-h4 {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin: 0.9rem 0 0.3rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.informe-h4:first-child { margin-top: 0; }
+.informe-list {
+  margin: 0.2rem 0 0.6rem 1.1rem;
+  padding: 0;
+}
+.informe-list li { margin-bottom: 0.25rem; }
+.informe-p { margin: 0.15rem 0 0.5rem; }
+
 /* ─── Toasts ─── */
 .toast-container {
   position: fixed;

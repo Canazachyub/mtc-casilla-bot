@@ -1171,6 +1171,15 @@ function renderDetailTab(d) {
 
     ${renderResumenEstructurado(d)}
 
+    ${d.informe ? `
+    <details class="informe-details" open>
+      <summary class="section-heading" style="cursor:pointer;list-style:none;display:flex;align-items:center;gap:0.4rem">
+        🧾 Informe IA <span class="muted small" style="font-weight:400;text-transform:none;letter-spacing:0">(análisis completo del documento)</span>
+        <span class="informe-toggle-icon">▾</span>
+      </summary>
+      <div class="informe-body">${renderMarkdown(d.informe)}</div>
+    </details>` : ''}
+
     <p class="section-heading">🗂 Tareas <span style="font-weight:400;font-size:0.8rem;text-transform:none;letter-spacing:0">(seleccioná las que aplican)</span></p>
     ${renderTareaEditor(d.tarea)}
 
@@ -1536,6 +1545,38 @@ function formatDate(s) {
   const d = new Date(s);
   if (isNaN(d.getTime())) return s;
   return d.toLocaleDateString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit' });
+}
+
+function renderMarkdown(md) {
+  if (!md) return '';
+  const lines = md.split('\n');
+  let html = '';
+  let inList = false;
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    if (line.startsWith('## ')) {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += `<h4 class="informe-h4">${escapeHtml(line.slice(3))}</h4>`;
+    } else if (/^[-*] /.test(line)) {
+      if (!inList) { html += '<ul class="informe-list">'; inList = true; }
+      const item = line.slice(2).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      html += `<li>${escapeHtml(item).replace(/&lt;strong&gt;/g,'<strong>').replace(/&lt;\/strong&gt;/g,'</strong>')}</li>`;
+    } else if (/^\d+\. /.test(line)) {
+      if (!inList) { html += '<ol class="informe-list">'; inList = true; }
+      const item = line.replace(/^\d+\. /, '');
+      html += `<li>${escapeHtml(item)}</li>`;
+    } else {
+      if (inList) { html += inList ? '</ul>' : '</ol>'; inList = false; }
+      if (line.trim() === '') {
+        html += '<br>';
+      } else {
+        const inline = escapeHtml(line).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        html += `<p class="informe-p">${inline}</p>`;
+      }
+    }
+  }
+  if (inList) html += '</ul>';
+  return html;
 }
 
 function escapeHtml(s) {

@@ -189,6 +189,7 @@ class Notification(BaseModel):
     estado: NotificationEstado = "pendiente"
     representante_legal: str = DEFAULT_REPRESENTANTE_LEGAL
     procesado_at: datetime | None = None
+    informe: str = ""
 
 
 # ─────────────────────────────────────────────────────────────────

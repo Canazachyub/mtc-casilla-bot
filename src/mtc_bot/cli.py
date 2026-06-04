@@ -518,6 +518,7 @@ async def _process_notification(  # noqa: PLR0911,PLR0912,PLR0913,PLR0915 — pi
     """
     from mtc_bot.ai_extractor import AIExtractionFailed
     from mtc_bot.ai_extractor import extract as ai_extract
+    from mtc_bot.ai_extractor import extract_informe as ai_extract_informe
     from mtc_bot.google.drive_uploader import upload_pdf
     from mtc_bot.google.sheets_writer import (
         append_notificacion,
@@ -592,9 +593,10 @@ async def _process_notification(  # noqa: PLR0911,PLR0912,PLR0913,PLR0915 — pi
         console.print(f"    [red]✗[/red] {asunto_short}: merge falló: {exc}")
         return False
 
-    # 6) Extract text
+    # 6) Extract text — versión truncada para DeepSeek y completa para el informe Gemini
     try:
         pdf_text = extract_text(merged_path)
+        pdf_text_full = extract_text(merged_path, max_pages=None)
     except FileNotFoundError as exc:
         console.print(f"    [red]✗[/red] {asunto_short}: extract_text falló: {exc}")
         return False
@@ -622,6 +624,9 @@ async def _process_notification(  # noqa: PLR0911,PLR0912,PLR0913,PLR0915 — pi
     except AIExtractionFailed as exc:
         console.print(f"    [yellow]⚠[/yellow] {asunto_short}: IA falló: {exc} (skip Sheet)")
         return False
+
+    # 7b) Informe estructurado con Gemini (texto completo, falla silenciosa)
+    informe = await ai_extract_informe(pdf_text_full, settings)
 
     # 8) Rename
     rename_seed = extraction.documento or detail_md.asunto or item.asunto
@@ -705,6 +710,7 @@ async def _process_notification(  # noqa: PLR0911,PLR0912,PLR0913,PLR0915 — pi
         "progreso": "NO INICIADO",
         "confianza_ia": extraction.confianza,
         "modelo_ia": extraction.modelo_ia,
+        "informe": informe,
         "drive_file_id": uploaded.file_id,
         "drive_view_url": uploaded.view_url,
         "estado": "pendiente",

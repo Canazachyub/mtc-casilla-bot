@@ -97,7 +97,7 @@ class Settings(BaseSettings):
     deepseek_model: str = "deepseek-chat"
     deepseek_base_url: str = "https://api.deepseek.com"
     gemini_api_key: SecretStr = Field(...)
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-2.0-flash"
 
     # ─ Google ─
     google_service_account_json: Path = Field(default=Path("data/credentials/service-account.json"))

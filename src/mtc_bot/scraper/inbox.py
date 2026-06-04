@@ -376,14 +376,32 @@ async def _navigate_to_page(page: Page, target_page: int) -> None:
     repetido, luego avanza con Next hasta llegar a ``target_page``.
     """
     if target_page == 1:
+        # Intentar botón "first page" (|<)
+        navigated = False
         first_btn = page.locator(SEL_PAG_FIRST).first
         try:
-            disabled = await first_btn.get_attribute("disabled", timeout=2000)
+            disabled = await first_btn.get_attribute("disabled", timeout=1000)
             if disabled is None:
+                pag_before = await _get_paginator_state(page)
                 await first_btn.click()
-                await page.wait_for_load_state("networkidle", timeout=_DEFAULT_PAGINATOR_TIMEOUT)
+                await _wait_paginator_changed(page, pag_before, 1)
+                navigated = True
         except PlaywrightTimeoutError:
             pass
+
+        if not navigated:
+            # Fallback: clic en Previous (<) hasta que esté deshabilitado (= página 1)
+            for _ in range(50):
+                prev_btn = page.locator(SEL_PAG_PREV).first
+                try:
+                    disabled = await prev_btn.get_attribute("disabled", timeout=1000)
+                except PlaywrightTimeoutError:
+                    break
+                if disabled is not None:
+                    break  # prev deshabilitado → ya estamos en página 1
+                pag_before = await _get_paginator_state(page)
+                await prev_btn.click()
+                await _wait_paginator_changed(page, pag_before, 1)
         return
 
     # Ir a página 1 vía "first" o Previous repetido
@@ -416,23 +434,72 @@ async def _navigate_to_page(page: Page, target_page: int) -> None:
 async def click_item(page: Page, item: InboxItem) -> None:
     """Hace clic en el ``item-notificacion`` y espera que cargue el detalle.
 
-    Navega a la página correcta del paginator antes de hacer click, para que
-    el índice ``item_index_in_page`` apunte al item correcto.
+    Navega a la página correcta del paginator antes de hacer click. Usa un
+    fragmento único del asunto para encontrar el item exacto en el DOM, en vez
+    de depender del índice de posición que puede cambiar tras la navegación.
 
     Args:
         page: Page con la lista del inbox visible.
         item: ``InboxItem`` previamente devuelto por ``list_inbox``.
     """
+    import re as _re
+    import asyncio as _asyncio
+
     await _navigate_to_page(page, item.page_index)
-    items_loc = page.locator(SEL_ITEM)
-    target = items_loc.nth(item.item_index_in_page)
+
+    # Esperar que los items estén visibles Y que la fecha del item aparezca en el DOM.
+    # En modo headless, el paginator cambia antes de que Angular re-renderice los items,
+    # por eso esperamos explícitamente que raw_fecha esté presente en los items.
+    await page.wait_for_selector(SEL_ITEM, state="visible", timeout=_DEFAULT_INBOX_LOAD_TIMEOUT)
+    for _ in range(60):  # hasta 6 s para que Angular renderice los items correctos
+        if await page.locator(SEL_ITEM).filter(has_text=item.raw_fecha).count() > 0:
+            break
+        await _asyncio.sleep(0.1)
+    else:
+        logger.warning(
+            "click_item: la fecha '%s' no apareció en los items tras 6 s — "
+            "posible página incorrecta. Paginator: %s",
+            item.raw_fecha, await _get_paginator_state(page),
+        )
+
+    # Extraer el número único de la notificación (ej: "001265-CR-2026") del asunto.
+    # Para items sin número (ej: "Notificacion Electronica MTC."), usar la fecha como
+    # discriminador único para evitar clicks en el item incorrecto.
+    _m = _re.search(r'\d{5,6}-[A-Z]{2}-\d{4}', item.asunto)
+    unique_text = _m.group(0) if _m else item.asunto[:30].strip()
+
+    # Polling hasta 4 s buscando el item por asunto + fecha exacta del portal.
+    target = None
+    for _ in range(40):
+        narrowed = page.locator(SEL_ITEM).filter(has_text=unique_text).filter(
+            has_text=item.raw_fecha
+        )
+        if await narrowed.count() > 0:
+            target = narrowed.first
+            break
+        await _asyncio.sleep(0.1)
+
+    if target is None:
+        logger.error(
+            "click_item: no encontró '%s' tras 4 s de espera en página %d. "
+            "Paginator actual: %s",
+            unique_text, item.page_index, await _get_paginator_state(page),
+        )
+        raise RuntimeError(f"Notificación no encontrada en el DOM: {unique_text}")
+
     await target.scroll_into_view_if_needed()
     await target.click()
-    await page.wait_for_selector(
-        SEL_DETAIL_TITLE,
-        state="visible",
-        timeout=_DEFAULT_DETAIL_TIMEOUT,
-    )
+
+    # Esperar que el título del detalle contenga el texto único de ESTE item.
+    # No alcanza con `wait_for_selector(SEL_DETAIL_TITLE, "visible")` porque cuando
+    # ya hay un detalle abierto (item anterior), el título viejo sigue visible y la
+    # espera retorna inmediatamente — el downloader leería los adjuntos equivocados.
+    detail_with_text = page.locator(SEL_DETAIL_TITLE).filter(has_text=unique_text)
+    try:
+        await detail_with_text.wait_for(state="visible", timeout=_DEFAULT_DETAIL_TIMEOUT)
+    except Exception:
+        # Fallback: al menos verificar que hay algún título visible
+        await page.wait_for_selector(SEL_DETAIL_TITLE, state="visible", timeout=5000)
 
 
 __all__ = [
