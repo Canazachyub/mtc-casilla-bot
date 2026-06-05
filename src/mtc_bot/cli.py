@@ -83,6 +83,40 @@ def version_cmd() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────
+# Comando: serve
+# ─────────────────────────────────────────────────────────────────
+
+@app.command("serve")
+def serve_cmd(
+    port: int = typer.Option(8080, "--port", "-p", help="Puerto del servidor local"),
+) -> None:
+    """Inicia el dashboard local con soporte de procesado manual de PDFs.
+
+    Sirve el frontend en http://localhost:<port> y expone
+    POST /api/manual para ingestar PDFs externos (WhatsApp, Gmail).
+    """
+    try:
+        import uvicorn
+    except ImportError:
+        console.print(
+            "[red]✗[/red] Dependencias 'serve' no instaladas. "
+            "Ejecutá: [bold]uv sync --extra serve[/bold]"
+        )
+        raise typer.Exit(1)
+
+    from mtc_bot.manual_server import create_app
+
+    frontend_dir = Path(__file__).parent.parent.parent / "frontend"
+    server_app = create_app(frontend_dir)
+
+    console.print(f"[bold green]✓[/bold green] Dashboard en [bold]http://localhost:{port}[/bold]")
+    console.print(f"  API manual: [bold]http://localhost:{port}/api/manual[/bold]")
+    console.print("  [dim]Ctrl+C para detener[/dim]")
+
+    uvicorn.run(server_app, host="127.0.0.1", port=port, log_level="warning")
+
+
+# ─────────────────────────────────────────────────────────────────
 # Comando: doctor
 # ─────────────────────────────────────────────────────────────────
 

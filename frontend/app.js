@@ -1760,30 +1760,195 @@ function bindNuevaTareaEvents() {
   const btnCerrar = document.getElementById('btn-cerrar-nueva-tarea');
   const btnCancel = document.getElementById('btn-cancelar-nueva-tarea');
   const form      = document.getElementById('form-nueva-tarea');
+  let   currentMode = 'simple';
 
-  function openModal() {
-    // Populate empresa select
-    const sel     = document.getElementById('nt-empresa');
+  function populateEmpresaSelects() {
     const empresas = loadEmpresasFromStorage();
-    sel.innerHTML = '<option value="">— Seleccioná la empresa —</option>' +
+    const opts = '<option value="">— Seleccioná la empresa —</option>' +
       Object.values(empresas)
         .map(e => `<option value="${escapeHtml(e.nombre)}">${escapeHtml(e.nombre)}</option>`)
         .join('');
-    // Default fecha to today
+    ['nt-empresa', 'pdf-empresa'].forEach(id => {
+      const sel = document.getElementById(id);
+      if (sel) sel.innerHTML = opts;
+    });
+  }
+
+  function setMode(mode) {
+    currentMode = mode;
+    document.querySelectorAll('.nt-mode-tab').forEach(t =>
+      t.classList.toggle('active', t.dataset.mode === mode));
+    document.getElementById('form-nueva-tarea').classList.toggle('hidden', mode !== 'simple');
+    document.getElementById('form-pdf-manual').classList.toggle('hidden', mode !== 'pdf');
+  }
+
+  function openModal() {
+    populateEmpresaSelects();
+    const today = new Date().toISOString().slice(0, 10);
     const fechaInput = document.getElementById('nt-fecha');
-    if (!fechaInput.value) fechaInput.value = new Date().toISOString().slice(0, 10);
+    if (fechaInput && !fechaInput.value) fechaInput.value = today;
+    const pdfFecha = document.getElementById('pdf-fecha');
+    if (pdfFecha && !pdfFecha.value) pdfFecha.value = today;
+    setMode('simple');
     modal.classList.remove('hidden');
   }
 
   function closeModal() {
     modal.classList.add('hidden');
     form.reset();
+    resetPdfForm();
   }
+
+  function resetPdfForm() {
+    document.getElementById('pdf-contexto').value = '';
+    document.getElementById('pdf-ruc').value = '';
+    document.getElementById('pdf-file-input').value = '';
+    document.getElementById('pdf-upload-placeholder').classList.remove('hidden');
+    document.getElementById('pdf-upload-selected').classList.add('hidden');
+    document.getElementById('pdf-progress').classList.add('hidden');
+    document.getElementById('pdf-result').classList.add('hidden');
+    document.getElementById('pdf-result').innerHTML = '';
+    document.querySelectorAll('.pdf-progress-step').forEach(s => {
+      s.textContent = s.textContent.replace(/^[✅❌]/, '⏳');
+      s.className = 'pdf-progress-step';
+    });
+  }
+
+  // Tabs de modo
+  document.querySelectorAll('.nt-mode-tab').forEach(tab =>
+    tab.addEventListener('click', () => setMode(tab.dataset.mode)));
 
   btnAbrir?.addEventListener('click', openModal);
   btnCerrar?.addEventListener('click', closeModal);
   btnCancel?.addEventListener('click', closeModal);
+  document.getElementById('btn-cancelar-pdf')?.addEventListener('click', closeModal);
   modal?.addEventListener('click', e => { if (e.target === modal) closeModal(); });
+
+  // ── File upload drag & drop ──────────────────────────────────────────────
+  const uploadZone = document.getElementById('pdf-upload-zone');
+  const fileInput  = document.getElementById('pdf-file-input');
+
+  uploadZone?.addEventListener('click', () => fileInput.click());
+  uploadZone?.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+  uploadZone?.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+  uploadZone?.addEventListener('drop', e => {
+    e.preventDefault();
+    uploadZone.classList.remove('drag-over');
+    const file = e.dataTransfer?.files[0];
+    if (file) setSelectedFile(file);
+  });
+  fileInput?.addEventListener('change', () => {
+    const file = fileInput.files[0];
+    if (file) setSelectedFile(file);
+  });
+
+  function setSelectedFile(file) {
+    if (!file.type.includes('pdf')) { showToast('Solo se aceptan archivos PDF', 'warn'); return; }
+    document.getElementById('pdf-file-name').textContent = file.name;
+    document.getElementById('pdf-file-size').textContent = (file.size / 1024).toFixed(0) + ' KB';
+    document.getElementById('pdf-upload-placeholder').classList.add('hidden');
+    document.getElementById('pdf-upload-selected').classList.remove('hidden');
+    // Sync file input
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    fileInput.files = dt.files;
+  }
+
+  // ── Procesar PDF ─────────────────────────────────────────────────────────
+  document.getElementById('btn-procesar-pdf')?.addEventListener('click', async () => {
+    const empresa = document.getElementById('pdf-empresa').value;
+    const file    = fileInput?.files[0];
+    if (!empresa) { showToast('Seleccioná la empresa', 'warn'); return; }
+    if (!file)    { showToast('Seleccioná un PDF', 'warn'); return; }
+
+    const btn = document.getElementById('btn-procesar-pdf');
+    btn.disabled = true;
+    btn.textContent = '⏳ Procesando...';
+
+    document.getElementById('pdf-progress').classList.remove('hidden');
+    document.getElementById('pdf-result').classList.add('hidden');
+
+    const steps = ['step-extract', 'step-ai', 'step-informe', 'step-drive', 'step-sheet'];
+    function markStep(id, ok) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const text = el.textContent.replace(/^[⏳✅❌]\s*/, '');
+      el.textContent = (ok ? '✅' : '❌') + ' ' + text;
+      el.classList.add(ok ? 'step-ok' : 'step-err');
+    }
+    function activeStep(id) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const text = el.textContent.replace(/^[⏳✅❌]\s*/, '');
+      el.textContent = '⏳ ' + text;
+    }
+
+    try {
+      // Los pasos de UI son aproximados — el servidor los ejecuta en secuencia
+      activeStep('step-extract');
+      await new Promise(r => setTimeout(r, 200));
+
+      const fd = new FormData();
+      fd.append('empresa', empresa);
+      fd.append('ruc',     document.getElementById('pdf-ruc').value.trim());
+      fd.append('contexto', document.getElementById('pdf-contexto').value.trim());
+      fd.append('fecha',   document.getElementById('pdf-fecha').value);
+      fd.append('pdf',     file);
+
+      // Simular progreso visual mientras se espera la respuesta
+      const stepDelays = [500, 2000, 1000, 1500, 500];
+      let stepIdx = 0;
+      const stepInterval = setInterval(() => {
+        if (stepIdx > 0) markStep(steps[stepIdx - 1], true);
+        if (stepIdx < steps.length) activeStep(steps[stepIdx]);
+        stepIdx++;
+        if (stepIdx >= steps.length) clearInterval(stepInterval);
+      }, stepDelays[stepIdx] || 1000);
+
+      const resp = await fetch('/api/manual', { method: 'POST', body: fd });
+      clearInterval(stepInterval);
+      steps.forEach((s, i) => markStep(s, i < stepIdx));
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ detail: 'Error desconocido' }));
+        throw new Error(err.detail || `HTTP ${resp.status}`);
+      }
+
+      const data = await resp.json();
+      steps.forEach(s => markStep(s, true));
+
+      const n = data.notification || {};
+      document.getElementById('pdf-result').innerHTML = `
+        <div class="pdf-result-ok">
+          <strong>✅ Notificación creada correctamente</strong>
+          <div class="pdf-result-detail">
+            <div><strong>Documento:</strong> ${escapeHtml(n.documento || '—')}</div>
+            <div><strong>Emisor:</strong> ${escapeHtml(n.emisor || '—')}</div>
+            <div><strong>Tipo:</strong> ${escapeHtml(n.tipo_acto || '—')}</div>
+            <div><strong>Plazo:</strong> ${n.plazo_dias_habiles ? n.plazo_dias_habiles + ' días hábiles' : '—'}</div>
+            ${n.drive_view_url ? `<div><a href="${escapeHtml(n.drive_view_url)}" target="_blank" rel="noopener">📄 Ver PDF en Drive ↗</a></div>` : ''}
+          </div>
+        </div>`;
+      document.getElementById('pdf-result').classList.remove('hidden');
+
+      // Añadir a la lista sin recargar
+      await loadAll();
+      showToast(`✅ "${n.documento || 'Documento'}" procesado y guardado`, 'ok');
+
+    } catch (err) {
+      steps.forEach(s => {
+        const el = document.getElementById(s);
+        if (el && !el.classList.contains('step-ok')) markStep(s, false);
+      });
+      document.getElementById('pdf-result').innerHTML =
+        `<div class="pdf-result-error">❌ Error: ${escapeHtml(err.message)}</div>`;
+      document.getElementById('pdf-result').classList.remove('hidden');
+      showToast('Error procesando PDF: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '⚡ Procesar con IA';
+    }
+  });
 
   form?.addEventListener('submit', e => {
     e.preventDefault();

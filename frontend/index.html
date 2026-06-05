@@ -259,32 +259,36 @@
 
   <!-- Modal nueva tarea manual -->
   <div id="modal-nueva-tarea" class="modal-empresa hidden">
-    <div class="modal-empresa-content" style="max-width:580px">
+    <div class="modal-empresa-content" style="max-width:620px">
       <div class="modal-empresa-header">
-        <h3>➕ Nueva tarea manual</h3>
+        <h3 id="nt-modal-title">➕ Nueva tarea manual</h3>
         <button class="modal-empresa-close" id="btn-cerrar-nueva-tarea">✕</button>
       </div>
-      <form id="form-nueva-tarea" class="empresa-form" autocomplete="off">
 
+      <!-- Selector de modo -->
+      <div class="nt-mode-tabs">
+        <button class="nt-mode-tab active" data-mode="simple">📝 Tarea simple</button>
+        <button class="nt-mode-tab" data-mode="pdf">📄 Procesar PDF con IA</button>
+      </div>
+
+      <!-- ── MODO SIMPLE ── -->
+      <form id="form-nueva-tarea" class="empresa-form" autocomplete="off">
         <div class="form-group">
           <label class="form-label">Empresa *</label>
           <select id="nt-empresa" class="response-select" required>
             <option value="">— Seleccioná la empresa —</option>
           </select>
         </div>
-
         <div class="form-group">
           <label class="form-label">Título / Documento *</label>
           <input type="text" id="nt-documento" class="response-input"
             placeholder="Ej: Renovación póliza de seguros, Reunión SUTRAN..." required>
         </div>
-
         <div class="form-group">
           <label class="form-label">Descripción / Asunto</label>
           <textarea id="nt-asunto" class="response-textarea" rows="2"
             placeholder="Detalle de lo que hay que hacer..."></textarea>
         </div>
-
         <div class="empresa-form-grid">
           <div class="form-group">
             <label class="form-label">Fecha</label>
@@ -308,7 +312,6 @@
               placeholder="Ej: presentar documentos, pagar multa...">
           </div>
         </div>
-
         <div class="empresa-form-actions">
           <span class="muted small">Se guarda localmente y en el Sheet si hay API</span>
           <div>
@@ -317,6 +320,71 @@
           </div>
         </div>
       </form>
+
+      <!-- ── MODO PDF ── -->
+      <div id="form-pdf-manual" class="empresa-form hidden">
+        <div class="empresa-form-grid">
+          <div class="form-group">
+            <label class="form-label">Empresa *</label>
+            <select id="pdf-empresa" class="response-select">
+              <option value="">— Seleccioná la empresa —</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">RUC</label>
+            <input type="text" id="pdf-ruc" class="response-input" placeholder="20xxxxxxxxx" maxlength="11">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Fecha del documento</label>
+            <input type="date" id="pdf-fecha" class="response-input">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Contexto — mensaje recibido (WhatsApp / Gmail)</label>
+          <textarea id="pdf-contexto" class="response-textarea" rows="4"
+            placeholder="Pegá aquí el texto del mensaje que acompañó al PDF. Ej: &quot;SUTRAN nos envió la siguiente carta requiriendo...&quot;"></textarea>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">PDF combinado *</label>
+          <div class="pdf-upload-zone" id="pdf-upload-zone">
+            <input type="file" id="pdf-file-input" accept="application/pdf" class="pdf-file-hidden">
+            <div class="pdf-upload-placeholder" id="pdf-upload-placeholder">
+              <span style="font-size:2rem">📎</span>
+              <span>Hacé clic o arrastrá el PDF aquí</span>
+              <span class="muted small">Solo archivos .pdf</span>
+            </div>
+            <div class="pdf-upload-selected hidden" id="pdf-upload-selected">
+              <span style="font-size:1.5rem">✅</span>
+              <span id="pdf-file-name" style="font-weight:600"></span>
+              <span id="pdf-file-size" class="muted small"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Progreso del procesado -->
+        <div id="pdf-progress" class="pdf-progress hidden">
+          <div class="pdf-progress-step" id="step-extract">⏳ Extrayendo texto del PDF...</div>
+          <div class="pdf-progress-step" id="step-ai">⏳ Analizando con DeepSeek...</div>
+          <div class="pdf-progress-step" id="step-informe">⏳ Generando informe IA...</div>
+          <div class="pdf-progress-step" id="step-drive">⏳ Subiendo a Drive...</div>
+          <div class="pdf-progress-step" id="step-sheet">⏳ Guardando en Sheet...</div>
+        </div>
+
+        <!-- Resultado -->
+        <div id="pdf-result" class="pdf-result hidden"></div>
+
+        <div class="empresa-form-actions">
+          <span class="muted small">El PDF se procesa localmente y se sube a Drive + Sheet</span>
+          <div>
+            <button type="button" id="btn-cancelar-pdf" class="btn-secondary">Cancelar</button>
+            <button type="button" id="btn-procesar-pdf" class="btn-generate" style="padding:0.5rem 1.4rem">
+              ⚡ Procesar con IA
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 

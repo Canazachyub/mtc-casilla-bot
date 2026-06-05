@@ -114,7 +114,7 @@ def notification_exists(
     """
     client = get_client(sa_json_path)
     ws = _get_worksheet(client, sheet_id, tab)
-    headers = ws.row_values(1)
+    headers = [h.strip() for h in ws.row_values(1)]
     if "id" not in headers:
         raise RuntimeError(f"Tab '{tab}' no tiene columna 'id' en la primera fila")
     id_col_index = headers.index("id") + 1  # gspread es 1-based
@@ -142,7 +142,7 @@ def append_notificacion(
     """
     client = get_client(sa_json_path)
     ws = _get_worksheet(client, sheet_id, tab)
-    headers = ws.row_values(1)
+    headers = [h.strip() for h in ws.row_values(1)]
     flat_row: list[str] = []
     for h in headers:
         v = row.get(h, "")
@@ -152,7 +152,11 @@ def append_notificacion(
             flat_row.append("")
         else:
             flat_row.append(str(v))
-    ws.append_row(flat_row, value_input_option="USER_ENTERED")
+    # Usar update con rango explícito en vez de append_row: evita que gspread
+    # trunque al ancho de los datos existentes (que puede ser < len(headers)).
+    next_row = len(ws.col_values(1)) + 1
+    last_col = gspread.utils.rowcol_to_a1(1, len(headers))[:-1]
+    ws.update(f"A{next_row}:{last_col}{next_row}", [flat_row], value_input_option="RAW")
     logger.info(
         "Sheet append OK: tab=%s id=%s",
         tab,
@@ -179,7 +183,7 @@ def delete_notificacion(
     """
     client = get_client(sa_json_path)
     ws = _get_worksheet(client, sheet_id, tab)
-    headers = ws.row_values(1)
+    headers = [h.strip() for h in ws.row_values(1)]
     if "id" not in headers:
         raise RuntimeError(f"Tab '{tab}' no tiene columna 'id'")
     id_col_index = headers.index("id") + 1
@@ -248,7 +252,7 @@ def update_notificacion_fields(
     """
     client = get_client(sa_json_path)
     ws = _get_worksheet(client, sheet_id, tab)
-    headers = ws.row_values(1)
+    headers = [h.strip() for h in ws.row_values(1)]
 
     if "id" not in headers:
         raise RuntimeError(f"Tab '{tab}' no tiene columna 'id'")
@@ -378,3 +382,4 @@ __all__ = [
     "verify_sheet_access",
     "write_resumen_diario",
 ]
+
