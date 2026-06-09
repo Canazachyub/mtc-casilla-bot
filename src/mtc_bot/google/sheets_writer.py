@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+from datetime import date, datetime
 from pathlib import Path
 from typing import TypedDict
+from zoneinfo import ZoneInfo
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -303,7 +305,7 @@ def write_resumen_diario(
     sa_json_path: Path,
     sheet_id: str,
     results: list[tuple[str, str, int, int, str | None]],
-    run_date: "date",
+    run_date: date,
     texto_resumen: str,
 ) -> None:
     """Escribe el resumen del run en el tab ``resumen_diario``, creándolo si no existe.
@@ -317,9 +319,6 @@ def write_resumen_diario(
         run_date: fecha del run (``date.today()``).
         texto_resumen: texto completo formateado para WhatsApp.
     """
-    from datetime import datetime as _dt
-    from zoneinfo import ZoneInfo
-
     HEADERS = [
         "fecha", "timestamp_run", "empresa", "ruc",
         "notif_encontradas", "notif_nuevas", "estado", "error_msg", "texto_linea",
@@ -337,7 +336,7 @@ def write_resumen_diario(
         ws.freeze(rows=1)
         logger.info("Tab '%s' creado", TAB)
 
-    now = _dt.now(tz=ZoneInfo("America/Lima")).isoformat(timespec="seconds")
+    now = datetime.now(tz=ZoneInfo("America/Lima")).isoformat(timespec="seconds")
     fecha_str = run_date.isoformat()
 
     rows_to_add = []
@@ -348,7 +347,8 @@ def write_resumen_diario(
         elif completados > 0:
             estado = "ok"
             suf = "es" if completados > 1 else ""
-            linea = f"• {empresa}: {completados} notificación{suf} nueva{'s' if completados > 1 else ''}"
+            suf_s = "s" if completados > 1 else ""
+            linea = f"• {empresa}: {completados} notificación{suf} nueva{suf_s}"
         elif listed > 0:
             estado = "ok"
             linea = f"• {empresa}: {listed} encontradas (ya registradas)"

@@ -59,7 +59,11 @@ ocr = [
     "pytesseract>=0.3.10",
     "pdf2image>=1.17.0",
 ]
-# Tests
+[dependency-groups]
+# Tests y tooling de desarrollo.
+# NOTA: van en [dependency-groups] (PEP 735), NO en optional-dependencies,
+# porque `uv sync` instala los grupos por defecto. Si pytest/ruff no están en
+# el venv, `uv run pytest` cae al pytest global del PATH → ModuleNotFoundError.
 dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.23.0",
@@ -97,6 +101,9 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S105", "S106", "PLR2004", "PLC0415"]
 "src/mtc_bot/cli.py" = ["PLC0415"]  # imports defensivos dentro de try/except por design
+# E501: las líneas largas están DENTRO de los strings de prompts IA; un `# noqa`
+# ahí sería parte del prompt y partir las líneas cambiaría el texto enviado al modelo.
+"src/mtc_bot/ai_extractor.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

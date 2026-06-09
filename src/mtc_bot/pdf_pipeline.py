@@ -250,8 +250,9 @@ def _configure_tesseract() -> None:
     import sys  # noqa: PLC0415
     if sys.platform != "win32":
         return
-    import pytesseract  # noqa: PLC0415
     import shutil  # noqa: PLC0415
+
+    import pytesseract  # noqa: PLC0415
     if shutil.which("tesseract"):
         return  # ya está en PATH
     candidates = [
@@ -301,7 +302,9 @@ def _try_ocr(pdf_path: Path, max_pages: int) -> str:
         lang = "spa+eng"
 
     try:
-        logger.info("Iniciando OCR (%s) sobre %s (primeras %d páginas)", lang, pdf_path.name, max_pages)
+        logger.info(
+            "Iniciando OCR (%s) sobre %s (primeras %d páginas)", lang, pdf_path.name, max_pages
+        )
         images = convert_from_path(str(pdf_path), first_page=1, last_page=max_pages, dpi=200)
         chunks: list[str] = []
         for i, img in enumerate(images, start=1):

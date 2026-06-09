@@ -7,6 +7,7 @@ orquestador decida cuáles descargar.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hashlib
 import logging
@@ -259,22 +260,18 @@ async def _wait_paginator_changed(
         max_wait_s: tiempo máximo de espera en segundos.
         poll_s: intervalo entre lecturas del paginator.
     """
-    import asyncio as _asyncio
-
     if pag_before is None:
         # Sin paginator visible: fallback al networkidle original
-        try:
+        with contextlib.suppress(PlaywrightTimeoutError):
             await page.wait_for_load_state(
                 "networkidle", timeout=int(_DEFAULT_PAGINATOR_TIMEOUT)
             )
-        except PlaywrightTimeoutError:
-            pass
         return
 
     start_before = pag_before[0]
     iterations = int(max_wait_s / poll_s)
     for _ in range(iterations):
-        await _asyncio.sleep(poll_s)
+        await asyncio.sleep(poll_s)
         pag_now = await _get_paginator_state(page)
         if pag_now and pag_now[0] != start_before:
             logger.debug(
@@ -291,7 +288,7 @@ async def _wait_paginator_changed(
     )
 
 
-async def list_inbox(
+async def list_inbox(  # noqa: PLR0912 — scraper crítico verificado en producción; no refactorizar
     page: Page,
     ruc: str,
     since: date | None = None,
@@ -378,7 +375,9 @@ async def list_inbox(
     return all_items
 
 
-async def _navigate_to_page(page: Page, target_page: int) -> None:
+async def _navigate_to_page(  # noqa: PLR0912 — scraper crítico verificado en producción
+    page: Page, target_page: int
+) -> None:
     """Navega al paginator hasta la página ``target_page`` (1-indexed).
 
     Primero va a la página 1 usando el botón "first" (si existe) o con Previous
@@ -451,9 +450,6 @@ async def click_item(page: Page, item: InboxItem) -> None:
         page: Page con la lista del inbox visible.
         item: ``InboxItem`` previamente devuelto por ``list_inbox``.
     """
-    import re as _re
-    import asyncio as _asyncio
-
     await _navigate_to_page(page, item.page_index)
 
     # Esperar que los items estén visibles Y que la fecha del item aparezca en el DOM.
@@ -463,7 +459,7 @@ async def click_item(page: Page, item: InboxItem) -> None:
     for _ in range(60):  # hasta 6 s para que Angular renderice los items correctos
         if await page.locator(SEL_ITEM).filter(has_text=item.raw_fecha).count() > 0:
             break
-        await _asyncio.sleep(0.1)
+        await asyncio.sleep(0.1)
     else:
         logger.warning(
             "click_item: la fecha '%s' no apareció en los items tras 6 s — "
@@ -474,7 +470,7 @@ async def click_item(page: Page, item: InboxItem) -> None:
     # Extraer el número único de la notificación (ej: "001265-CR-2026") del asunto.
     # Para items sin número (ej: "Notificacion Electronica MTC."), usar la fecha como
     # discriminador único para evitar clicks en el item incorrecto.
-    _m = _re.search(r'\d{5,6}-[A-Z]{2}-\d{4}', item.asunto)
+    _m = re.search(r'\d{5,6}-[A-Z]{2}-\d{4}', item.asunto)
     unique_text = _m.group(0) if _m else item.asunto[:30].strip()
 
     # Polling hasta 4 s buscando el item por asunto + fecha exacta del portal.
@@ -486,7 +482,7 @@ async def click_item(page: Page, item: InboxItem) -> None:
         if await narrowed.count() > 0:
             target = narrowed.first
             break
-        await _asyncio.sleep(0.1)
+        await asyncio.sleep(0.1)
 
     if target is None:
         logger.error(

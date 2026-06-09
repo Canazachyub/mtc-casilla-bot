@@ -207,7 +207,7 @@ uv run python scripts/debug_scraper_ui.py
 GUI Tkinter para verificar el pipeline casilla por casilla antes de correr producción.
 
 ```bash
-uv sync --extra dev   # instala tkcalendar (solo la primera vez)
+uv sync               # instala tkcalendar (grupo dev, solo la primera vez)
 uv run python scripts/debug_scraper_ui.py
 ```
 

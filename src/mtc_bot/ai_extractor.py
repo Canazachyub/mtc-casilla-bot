@@ -377,7 +377,7 @@ async def extract(texto: str, settings: Settings | None = None) -> ExtractionRes
 async def extract_informe(
     texto: str,
     settings: Settings | None = None,
-    timeout: float = 120.0,
+    timeout: float = 120.0,  # noqa: ASYNC109 — se pasa a httpx, no se usa asyncio.timeout
 ) -> str:
     """Genera un informe estructurado en Markdown usando Gemini (contexto completo).
 

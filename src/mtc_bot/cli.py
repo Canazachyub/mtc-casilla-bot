@@ -10,6 +10,7 @@ Comandos disponibles:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import sys
 from datetime import date, datetime, timedelta
@@ -102,7 +103,7 @@ def serve_cmd(
             "[red]✗[/red] Dependencias 'serve' no instaladas. "
             "Ejecutá: [bold]uv sync --extra serve[/bold]"
         )
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     from mtc_bot.manual_server import create_app
 
@@ -393,7 +394,9 @@ def _short_name(empresa: str) -> str:
     """Deriva nombre corto de la razón social para el resumen."""
     import re as _re
     s = _re.sub(r'\s*\([^)]+\)', '', empresa).strip()
-    s = _re.sub(r'\b(SAC|EIRL|SRL|S\.A\.C\.|S\.R\.L\.|LTDA|S\.A\.)\b\.?', '', s, flags=_re.IGNORECASE)
+    s = _re.sub(
+        r'\b(SAC|EIRL|SRL|S\.A\.C\.|S\.R\.L\.|LTDA|S\.A\.)\b\.?', '', s, flags=_re.IGNORECASE
+    )
     s = _re.sub(r'\bCITV\s+', '', s, flags=_re.IGNORECASE)
     s = _re.sub(r'\s+', ' ', s).strip(' -')
     return s or empresa
@@ -401,7 +404,7 @@ def _short_name(empresa: str) -> str:
 
 def _print_run_summary(
     results: list[tuple[str, int, int, str | None]],
-    since_date: "date | None",
+    since_date: date | None,
 ) -> None:
     """Imprime el resumen final copy-paste listo para WhatsApp."""
     from datetime import date as _date
@@ -422,7 +425,8 @@ def _print_run_summary(
         elif completados > 0:
             nuevas_total += completados
             suf = "es" if completados > 1 else ""
-            lines.append(f"• {name}: *{completados:02d} notificación{suf} nueva{'s' if completados > 1 else ''}* ✅")
+            suf_s = "s" if completados > 1 else ""
+            lines.append(f"• {name}: *{completados:02d} notificación{suf} nueva{suf_s}* ✅")
         elif listed > 0:
             lines.append(f"• {name}: {listed} encontradas (ya registradas).")
         else:
@@ -461,7 +465,10 @@ def _parse_since(since: str) -> date | None:
         return date.fromisoformat(since)
     except ValueError:
         pass
-    console.print(f"[red]✗ --since inválido: {since!r}. Formatos válidos: today, yesterday, all, 3d, YYYY-MM-DD[/red]")
+    console.print(
+        f"[red]✗ --since inválido: {since!r}. "
+        f"Formatos válidos: today, yesterday, all, 3d, YYYY-MM-DD[/red]"
+    )
     raise typer.Exit(code=1)
 
 
@@ -647,7 +654,9 @@ async def _process_notification(  # noqa: PLR0911,PLR0912,PLR0913,PLR0915 — pi
         f"Fecha de notificación: {detail_md.fecha_full}\n"
     )
     if detail_md.cuerpo.strip():
-        portal_ctx += f"\n=== MENSAJE DEL PORTAL (siempre texto limpio) ===\n{detail_md.cuerpo.strip()}\n"
+        portal_ctx += (
+            f"\n=== MENSAJE DEL PORTAL (siempre texto limpio) ===\n{detail_md.cuerpo.strip()}\n"
+        )
     if pdf_text.strip():
         portal_ctx += f"\n=== TEXTO DEL PDF ADJUNTO ===\n{pdf_text}"
     texto = portal_ctx
@@ -699,7 +708,8 @@ async def _process_notification(  # noqa: PLR0911,PLR0912,PLR0913,PLR0915 — pi
     if fecha_final == _date.min:
         if detail_md.fecha is not None:
             logger.warning(
-                "Usando fecha del DETALLE como fallback (%s) — la fecha del inbox no pudo parsearse",
+                "Usando fecha del DETALLE como fallback (%s) — "
+                "la fecha del inbox no pudo parsearse",
                 detail_md.fecha,
             )
             fecha_final = detail_md.fecha
@@ -846,7 +856,7 @@ async def _process_one_ruc(  # noqa: PLR0913 — función privada del CLI
 
 
 @app.command("run")
-def run_cmd(
+def run_cmd(  # noqa: PLR0915 — orquestación end-to-end secuencial; no fragmentar
     ruc: Annotated[
         str | None,
         typer.Option("--ruc", "-r", help="RUC específico a procesar (opcional)."),
@@ -874,7 +884,8 @@ def run_cmd(
         bool,
         typer.Option(
             "--overwrite",
-            help="Sobreescribir notificaciones ya procesadas: borra la fila existente y reprocesa completa.",
+            help="Sobreescribir notificaciones ya procesadas: "
+            "borra la fila existente y reprocesa completa.",
         ),
     ] = False,
 ) -> None:
@@ -910,7 +921,10 @@ def run_cmd(
         for idx, creds in enumerate(targets):
             # Pausa entre compañías para no disparar el rate-limit de Cloudflare.
             if idx > 0:
-                console.print(f"  [dim]Esperando {_INTER_RUC_WAIT_S}s antes de la siguiente empresa...[/dim]")
+                console.print(
+                    f"  [dim]Esperando {_INTER_RUC_WAIT_S}s antes de la siguiente empresa..."
+                    f"[/dim]"
+                )
                 await asyncio.sleep(_INTER_RUC_WAIT_S)
             console.print(f"[cyan]→ {creds.empresa}[/cyan]")
             last_exc: Exception | None = None
@@ -963,7 +977,7 @@ def run_cmd(
                         f"{c} notificación{'es' if c > 1 else ''} nueva{'s' if c > 1 else ''}"
                         if c > 0 else ("error" if err else "no hay notificaciones nuevas")
                     )
-                    for e, _r, l, c, err in run_results
+                    for e, _r, _listed, c, err in run_results
                 )
                 write_resumen_diario(
                     settings.google_service_account_json,
@@ -1052,7 +1066,9 @@ def reprocess_cmd(
     ] = 50,
     all_fields: Annotated[
         bool,
-        typer.Option("--all-fields", help="Actualizar TODOS los campos IA (no solo los nuevos vacíos)."),
+        typer.Option(
+            "--all-fields", help="Actualizar TODOS los campos IA (no solo los nuevos vacíos)."
+        ),
     ] = False,
     dry_run: Annotated[
         bool,
@@ -1074,15 +1090,16 @@ def reprocess_cmd(
     asyncio.run(_reprocess_async(limit=limit, all_fields=all_fields, dry_run=dry_run))
 
 
-async def _reprocess_async(limit: int, all_fields: bool, dry_run: bool) -> None:
+async def _reprocess_async(  # noqa: PLR0912, PLR0915 — pipeline secuencial; no fragmentar
+    limit: int, all_fields: bool, dry_run: bool
+) -> None:
     """Orquesta el re-procesamiento de notificaciones existentes."""
     from mtc_bot.ai_extractor import AIExtractionFailed
     from mtc_bot.ai_extractor import extract as ai_extract
+    from mtc_bot.config import PROJECT_ROOT  # noqa: PLC0415
     from mtc_bot.google.drive_uploader import download_pdf_from_drive
     from mtc_bot.google.sheets_writer import get_all_notificaciones, update_notificacion_fields
     from mtc_bot.pdf_pipeline import extract_text
-
-    from mtc_bot.config import PROJECT_ROOT  # noqa: PLC0415
 
     settings = get_settings()
     tmp_dir = PROJECT_ROOT / "data" / "downloads" / "_reprocess_tmp"
@@ -1243,11 +1260,9 @@ async def _reprocess_async(limit: int, all_fields: bool, dry_run: bool) -> None:
 
         tmp_pdf.unlink(missing_ok=True)
 
-    # Limpiar directorio temporal
-    try:
+    # Limpiar directorio temporal (puede tener archivos si hubo errores — no importa)
+    with contextlib.suppress(OSError):
         tmp_dir.rmdir()
-    except OSError:
-        pass  # aún tiene archivos si hubo errores — no importa
 
     console.print(
         Panel(

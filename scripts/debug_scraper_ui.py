@@ -101,7 +101,7 @@ def _pick_date(root: tk.Tk, var: tk.StringVar) -> None:
     except ImportError:
         messagebox.showinfo(
             "tkcalendar no instalado",
-            "Ejecutá: uv sync --extra dev",
+            "Ejecutá: uv sync --group dev",
         )
         return
 

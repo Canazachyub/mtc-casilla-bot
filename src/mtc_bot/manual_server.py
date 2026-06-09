@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import tempfile
 from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -19,12 +18,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from mtc_bot.ai_extractor import AIExtractionFailed
+from mtc_bot.ai_extractor import extract as ai_extract
+from mtc_bot.ai_extractor import extract_informe as ai_extract_informe
+from mtc_bot.config import get_settings
+from mtc_bot.google.drive_uploader import upload_pdf
+from mtc_bot.google.sheets_writer import append_notificacion
+from mtc_bot.pdf_pipeline import extract_text, rename_merged
+
 logger = logging.getLogger(__name__)
 
 _LIMA = ZoneInfo("America/Lima")
 
+# Máximo de caracteres del informe IA incluidos en la respuesta JSON (preview).
+_INFORME_PREVIEW_CHARS = 500
 
-def create_app(frontend_dir: Path) -> FastAPI:
+
+def create_app(frontend_dir: Path) -> FastAPI:  # noqa: PLR0915 — endpoint inline por diseño
     """Crea y configura la aplicación FastAPI."""
 
     app = FastAPI(title="MTC Casilla Bot — Dashboard local", docs_url=None, redoc_url=None)
@@ -39,12 +49,12 @@ def create_app(frontend_dir: Path) -> FastAPI:
     # ─── Endpoint de procesado manual ────────────────────────────────────────
 
     @app.post("/api/manual")
-    async def process_manual(
+    async def process_manual(  # noqa: PLR0915 — pipeline secuencial; no fragmentar
         empresa: str = Form(...),
         ruc: str = Form(default=""),
         contexto: str = Form(default=""),
         fecha: str = Form(default=""),
-        pdf: UploadFile = File(...),
+        pdf: UploadFile = File(...),  # noqa: B008 — patrón estándar FastAPI
     ) -> JSONResponse:
         """Procesa un PDF externo con el mismo pipeline que las casillas automáticas.
 
@@ -55,14 +65,6 @@ def create_app(frontend_dir: Path) -> FastAPI:
             fecha: fecha de la notificación (ISO YYYY-MM-DD; vacío → hoy).
             pdf: archivo PDF combinado (doc principal + constancias).
         """
-        from mtc_bot.ai_extractor import AIExtractionFailed
-        from mtc_bot.ai_extractor import extract as ai_extract
-        from mtc_bot.ai_extractor import extract_informe as ai_extract_informe
-        from mtc_bot.config import get_settings
-        from mtc_bot.google.drive_uploader import upload_pdf
-        from mtc_bot.google.sheets_writer import append_notificacion
-        from mtc_bot.pdf_pipeline import extract_text
-
         cfg = get_settings()
 
         # 1) Guardar PDF temporalmente
@@ -70,7 +72,7 @@ def create_app(frontend_dir: Path) -> FastAPI:
         if not pdf_bytes:
             raise HTTPException(status_code=400, detail="El PDF está vacío.")
 
-        pdf_hash = hashlib.md5(pdf_bytes).hexdigest()[:12]
+        pdf_hash = hashlib.md5(pdf_bytes, usedforsecurity=False).hexdigest()[:12]
         ruc_safe = ruc.strip() or "MANUAL"
         sheet_id = f"manual__{ruc_safe}__{pdf_hash}"
 
@@ -112,7 +114,6 @@ def create_app(frontend_dir: Path) -> FastAPI:
         # 6) Renombrar PDF con nombre extraído por IA
         doc_name = extraction.documento or (pdf.filename or "documento")
         try:
-            from mtc_bot.pdf_pipeline import rename_merged
             final_pdf = rename_merged(pdf_path, doc_name)
         except Exception:
             final_pdf = pdf_path
@@ -138,7 +139,9 @@ def create_app(frontend_dir: Path) -> FastAPI:
             logger.warning("Drive upload falló (continuando sin Drive): %s", exc)
 
         # 8) Calcular plazo de vencimiento
-        from mtc_bot.cli import _estimate_vencimiento
+        # Import diferido intencional: evita el ciclo cli ↔ manual_server
+        # (cli importa create_app de este módulo en el comando `serve`).
+        from mtc_bot.cli import _estimate_vencimiento  # noqa: PLC0415
         plazo_venc = _estimate_vencimiento(fecha_dt, extraction.plazo_dias_habiles)
 
         # 9) Append al Sheet
@@ -195,7 +198,11 @@ def create_app(frontend_dir: Path) -> FastAPI:
             "tipo_acto": extraction.tipo_acto,
             "plazo_dias_habiles": extraction.plazo_dias_habiles,
             "plazo_vencimiento": str(plazo_venc) if plazo_venc else "",
-            "informe": informe[:500] + "..." if len(informe) > 500 else informe,
+            "informe": (
+                informe[:_INFORME_PREVIEW_CHARS] + "..."
+                if len(informe) > _INFORME_PREVIEW_CHARS
+                else informe
+            ),
             "drive_view_url": drive_view_url,
             "fecha_notificacion": fecha_dt.isoformat(),
         }})

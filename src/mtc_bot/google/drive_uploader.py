@@ -115,7 +115,10 @@ def get_drive_service_oauth(oauth_json_path: Path, token_path: Path, login_hint:
         if not creds or not creds.valid:
             hint_msg = f" (cuenta: {login_hint})" if login_hint else ""
             logger.info("[drive] Abriendo browser para nueva autorización OAuth...%s", hint_msg)
-            print(f"\n⚠️  AUTORIZACION DRIVE: se va a abrir el browser. Seleccioná la cuenta: {login_hint or '(ver .env GOOGLE_OAUTH_HINT)'}\n")
+            print(
+                f"\n⚠️  AUTORIZACION DRIVE: se va a abrir el browser. "
+                f"Seleccioná la cuenta: {login_hint or '(ver .env GOOGLE_OAUTH_HINT)'}\n"
+            )
             flow = InstalledAppFlow.from_client_secrets_file(str(oauth_json_path), _OAUTH_SCOPES)
             kwargs = {"login_hint": login_hint} if login_hint else {}
             creds = flow.run_local_server(port=0, **kwargs)
@@ -197,7 +200,9 @@ def upload_pdf(
         raise FileNotFoundError(f"PDF no existe: {pdf_path}")
 
     if oauth_json_path and oauth_json_path.exists() and oauth_token_path is not None:
-        service = get_drive_service_oauth(oauth_json_path, oauth_token_path, login_hint=oauth_login_hint)
+        service = get_drive_service_oauth(
+            oauth_json_path, oauth_token_path, login_hint=oauth_login_hint
+        )
     else:
         logger.warning("[drive] OAuth no configurado — usando SA (puede fallar con 403 quota)")
         service = get_drive_service(sa_json_path)
@@ -241,7 +246,6 @@ def download_pdf_from_drive(sa_json_path: Path, file_id: str, dest_path: Path) -
         googleapiclient.errors.HttpError: si el archivo no existe o el SA no tiene acceso.
         OSError: si no se puede escribir el archivo local.
     """
-    import io  # noqa: PLC0415
 
     from googleapiclient.http import MediaIoBaseDownload  # noqa: PLC0415
 
