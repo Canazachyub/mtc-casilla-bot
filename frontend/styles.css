@@ -513,6 +513,29 @@ tbody tr.row-alerta:hover { background: rgba(245,158,11,0.06); }
 }
 .btn-detail:hover { background: var(--surface-2); color: var(--text); }
 
+/* ─── Botón-link al Redactor (Streamlit) ─── */
+a.btn-redactar {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 0.55rem 1rem;
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+a.btn-redactar:hover { background: var(--border); }
+a.btn-redactar-mini {
+  display: inline-block;
+  text-decoration: none;
+  margin-left: 0.3rem;
+  padding: 0.3rem 0.5rem;
+}
+
 /* ─── Badges ─── */
 .badge {
   display: inline-block;

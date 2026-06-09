@@ -86,7 +86,8 @@ function registrarDocEmpresa_(data) {
     sheet.setFrozenRows(1);
   }
 
-  const now    = new Date().toISOString();
+  // Hora local de Lima (toISOString() es UTC y corre el día después de las 19:00).
+  const now    = Utilities.formatDate(new Date(), 'America/Lima', "yyyy-MM-dd'T'HH:mm:ssXXX");
   const rows   = sheet.getDataRange().getValues();
   const headers = rows[0];
   const eKey   = headers.indexOf('empresa_key');
@@ -148,12 +149,12 @@ function handleList_(params) {
   let data = rows.slice(1).map(r => rowToObject_(headers, r));
 
   if (params.since) {
-    const since = new Date(params.since);
-    data = data.filter(r => r.fecha_notificacion && new Date(r.fecha_notificacion) >= since);
+    const since = parseLocalDate_(params.since);
+    data = data.filter(r => r.fecha_notificacion && parseLocalDate_(r.fecha_notificacion) >= since);
   }
   if (params.until) {
-    const until = new Date(params.until);
-    data = data.filter(r => r.fecha_notificacion && new Date(r.fecha_notificacion) <= until);
+    const until = parseLocalDate_(params.until);
+    data = data.filter(r => r.fecha_notificacion && parseLocalDate_(r.fecha_notificacion) <= until);
   }
   if (params.ruc)           data = data.filter(r => String(r.ruc) === String(params.ruc));
   if (params.estado)        data = data.filter(r => r.estado === params.estado);
@@ -170,19 +171,19 @@ function handleList_(params) {
   const today = stripTime_(new Date());
   data.forEach(r => {
     if (r.plazo_vencimiento) {
-      const venc = stripTime_(new Date(r.plazo_vencimiento));
+      const venc = stripTime_(r.plazo_vencimiento);
       r.dias_restantes = Math.round((venc - today) / 86400000);
     }
     // plazo_vencido: venció y no está PRESENTADO
     r.plazo_vencido = !!(
       r.plazo_vencimiento &&
-      stripTime_(new Date(r.plazo_vencimiento)) < today &&
+      stripTime_(r.plazo_vencimiento) < today &&
       r.progreso !== 'PRESENTADO'
     );
   });
 
   data.sort((a, b) =>
-    new Date(b.fecha_notificacion || 0) - new Date(a.fecha_notificacion || 0)
+    parseLocalDate_(b.fecha_notificacion || 0) - parseLocalDate_(a.fecha_notificacion || 0)
   );
 
   const limit  = Math.min(parseInt(params.limit  || '200', 10), 500);
@@ -203,7 +204,7 @@ function handleDetail_(params) {
     if (String(rows[i][idCol]) === String(params.id)) {
       const obj = rowToObject_(headers, rows[i]);
       if (obj.plazo_vencimiento) {
-        const venc = stripTime_(new Date(obj.plazo_vencimiento));
+        const venc = stripTime_(obj.plazo_vencimiento);
         obj.dias_restantes = Math.round((venc - stripTime_(new Date())) / 86400000);
       }
       return obj;
@@ -220,7 +221,8 @@ function handleSummary_() {
   const headers = rows[0];
   const data = rows.slice(1).map(r => rowToObject_(headers, r));
   const today = stripTime_(new Date());
-  const todayStr = today.toISOString().slice(0, 10);
+  // 'hoy' calculado en America/Lima (toISOString() convierte a UTC y corre el día)
+  const todayStr = Utilities.formatDate(new Date(), 'America/Lima', 'yyyy-MM-dd');
 
   return {
     total: data.length,
@@ -229,7 +231,7 @@ function handleSummary_() {
     ).length,
     vencidos: data.filter(r => {
       if (!r.plazo_vencimiento || r.progreso === 'PRESENTADO') return false;
-      return new Date(r.plazo_vencimiento) < today;
+      return stripTime_(r.plazo_vencimiento) < today;
     }).length,
     hoy: data.filter(r => String(r.fecha_notificacion).startsWith(todayStr)).length,
     por_ruc: groupBy_(data, 'ruc'),
@@ -516,7 +518,7 @@ function handleGetEmpresaDocs_() {
   const headers = rows[0];
   const docs = rows.slice(1).map(r => {
     const obj = {};
-    headers.forEach((h, i) => { obj[h] = r[i] instanceof Date ? r[i].toISOString() : r[i]; });
+    headers.forEach((h, i) => { obj[h] = r[i] instanceof Date ? dateToString_(r[i]) : r[i]; });
     return obj;
   });
   return { docs };
@@ -569,16 +571,38 @@ function rowToObject_(headers, row) {
   const obj = {};
   headers.forEach((h, i) => {
     let v = row[i];
-    if (v instanceof Date) v = v.toISOString();
+    if (v instanceof Date) v = dateToString_(v);
     obj[h] = v;
   });
   return obj;
 }
 
+// Parsea strings YYYY-MM-DD como fecha LOCAL del script (America/Lima).
+// new Date('YYYY-MM-DD') las interpretaría como medianoche UTC y correría el día.
+// Los datetimes ISO con hora y los Date se delegan a new Date().
+function parseLocalDate_(v) {
+  if (v instanceof Date) return new Date(v.getTime());
+  if (typeof v === 'string') {
+    const m = v.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  }
+  return new Date(v);
+}
+
 function stripTime_(d) {
-  const r = new Date(d);
+  const r = parseLocalDate_(d);
   r.setHours(0, 0, 0, 0);
   return r;
+}
+
+// Serializa Dates leídos del Sheet: celdas de fecha pura (medianoche local)
+// salen como 'yyyy-MM-dd' en America/Lima; los timestamps reales conservan
+// hora + offset. Evita el corrimiento de día de toISOString() (convierte a UTC).
+function dateToString_(v) {
+  if (Utilities.formatDate(v, 'America/Lima', 'HHmmss') === '000000') {
+    return Utilities.formatDate(v, 'America/Lima', 'yyyy-MM-dd');
+  }
+  return Utilities.formatDate(v, 'America/Lima', "yyyy-MM-dd'T'HH:mm:ssXXX");
 }
 
 function groupBy_(arr, key) {

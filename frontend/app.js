@@ -7,6 +7,8 @@
 const STORAGE_KEY    = 'mtc_bot_api_url';
 const API_URL_PREFIX = 'https://script.google.com/macros/';
 const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbznqF-CmlzlNs3IsnS7x0DUjQFeB1ObpxfwaCjUPz3L2r5JCBpSAlFV063xxo3EKZZ0/exec';
+// URL del Redactor (app Streamlit que genera los Word). Cambiar acá si corre en otro host/puerto.
+const REDACTOR_URL   = 'http://localhost:8501';
 
 /* ──────────────────────────── Datos legales de empresas ───────── */
 const EMPRESAS_LEGALES = {
@@ -502,7 +504,7 @@ async function handleDocUpload(empresaKey, docKey, docNombre, file) {
 
     const data = loadEmpresasFromStorage();
     data[empresaKey].documentos[docKey].url   = result.view_url;
-    data[empresaKey].documentos[docKey].fecha = new Date().toISOString().slice(0, 10);
+    data[empresaKey].documentos[docKey].fecha = todayLocalStr();
     saveEmpresasToStorage(data);
     showToast(`${docNombre} subido correctamente ✅`, 'ok');
     renderEmpresasView();
@@ -616,8 +618,11 @@ function applyFilters() {
   }
 
   if (f.since) {
-    const since = new Date(f.since);
-    data = data.filter(i => i.fecha_notificacion && new Date(i.fecha_notificacion) >= since);
+    const since = parseLocalDate(f.since);
+    data = data.filter(i => {
+      const d = parseLocalDate(i.fecha_notificacion);
+      return d && d >= since;
+    });
   }
 
   state.filtered = data;
@@ -883,7 +888,11 @@ function renderTable(items) {
         <div style="font-size:0.82rem">${i.plazo_vencimiento ? formatDate(i.plazo_vencimiento) : '—'}</div>
         <div style="margin-top:2px">${badgeDias(i.dias_restantes)}</div>
       </td>
-      <td><button class="btn-detail" data-id="${escapeHtml(i.id)}">Ver →</button></td>
+      <td style="white-space:nowrap">
+        <button class="btn-detail" data-id="${escapeHtml(i.id)}">Ver →</button>
+        <a class="btn-detail btn-redactar-mini" href="${redactorLink(i.id)}" target="_blank"
+          rel="noopener" title="Redactar respuesta">📝</a>
+      </td>
     </tr>
   `).join('');
 
@@ -1250,12 +1259,23 @@ function guessTemplateId(detail) {
   return 'carta-descargo';
 }
 
+// Link al Redactor Streamlit para un caso (requiere el Redactor corriendo en REDACTOR_URL)
+function redactorLink(id) {
+  return `${REDACTOR_URL}/?case_id=${encodeURIComponent(id)}`;
+}
+
+function btnRedactarHtml(id, extraClass = '') {
+  return `<a class="btn-redactar ${extraClass}" href="${redactorLink(id)}" target="_blank"
+    rel="noopener" title="Redactar respuesta en el Redactor (Streamlit)">📝 Redactar</a>`;
+}
+
 function renderResponsePanel(notifId, detail) {
   if (state.templates.length === 0) {
     return `
       <div class="response-no-templates">
         <p>⚠️ No hay plantillas disponibles.</p>
         <p class="muted small">Ejecutá <code>_setupPlantillas()</code> en Apps Script, luego recargá el dashboard.</p>
+        <div class="response-actions" style="margin-top:0.7rem">${btnRedactarHtml(notifId)}</div>
       </div>
     `;
   }
@@ -1298,7 +1318,10 @@ function renderResponsePanel(notifId, detail) {
           placeholder="Fechas relevantes, argumentos legales, datos de la empresa, acciones tomadas..."
           rows="6"></textarea>
       </div>
-      <button id="btn-generate" class="btn-generate">✨ Generar con IA</button>
+      <div class="response-actions">
+        <button id="btn-generate" class="btn-generate">✨ Generar con IA</button>
+        ${btnRedactarHtml(notifId)}
+      </div>
       <div id="response-generating" class="response-loading hidden">
         <div class="spinner"></div>
         Generando respuesta... esto puede tomar unos segundos.
@@ -1540,10 +1563,36 @@ function showToast(msg, type = 'info') {
 
 /* ──────────────────────────── Helpers ─────────────────────────── */
 
+// Parsea fechas YYYY-MM-DD como fecha LOCAL (no UTC) para evitar el corrimiento
+// de -5h en Perú. Los datetimes ISO con hora ("T") se delegan a new Date().
+function parseLocalDate(s) {
+  if (!s) return null;
+  if (typeof s === 'string') {
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  }
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+// Medianoche de HOY en hora local (para comparar contra fechas date-only)
+function todayLocal() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+// Fecha de HOY como string YYYY-MM-DD en hora local (no UTC)
+function todayLocalStr() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 function formatDate(s) {
   if (!s) return '—';
-  const d = new Date(s);
-  if (isNaN(d.getTime())) return s;
+  const d = parseLocalDate(s);
+  if (!d) return s;
   return d.toLocaleDateString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit' });
 }
 
@@ -1669,7 +1718,7 @@ async function syncEmpresaDocsFromApi() {
 /* ──────────────────────────── Resumen del día ─────────────────── */
 
 function generateResumenDiario() {
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = todayLocalStr();
   const fecha    = new Date().toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric' });
   const empresas = loadEmpresasFromStorage();
 
@@ -1748,9 +1797,10 @@ function saveManualTask(item) {
 
 function calcDiasRestantes(plazoStr) {
   if (!plazoStr) return '';
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const plazo = new Date(plazoStr); plazo.setHours(0, 0, 0, 0);
-  if (isNaN(plazo)) return '';
+  const today = todayLocal();
+  const plazo = parseLocalDate(plazoStr);
+  if (!plazo) return '';
+  plazo.setHours(0, 0, 0, 0);
   return String(Math.round((plazo - today) / 86400000));
 }
 
@@ -1784,7 +1834,7 @@ function bindNuevaTareaEvents() {
 
   function openModal() {
     populateEmpresaSelects();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayLocalStr();
     const fechaInput = document.getElementById('nt-fecha');
     if (fechaInput && !fechaInput.value) fechaInput.value = today;
     const pdfFecha = document.getElementById('pdf-fecha');
@@ -1966,7 +2016,7 @@ function bindNuevaTareaEvents() {
       fecha_notificacion: document.getElementById('nt-fecha').value,
       plazo_vencimiento:  plazo,
       dias_restantes:     calcDiasRestantes(plazo),
-      plazo_vencido:      plazo ? new Date(plazo) < new Date() : false,
+      plazo_vencido:      plazo ? parseLocalDate(plazo) < todayLocal() : false,
       progreso:           document.getElementById('nt-progreso').value,
       tarea:              document.getElementById('nt-tarea').value.trim(),
       sede:               '',
