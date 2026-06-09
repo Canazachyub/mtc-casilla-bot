@@ -329,17 +329,23 @@ async def list_inbox(
         page_items = await _read_items_in_current_page(page, ruc, page_index)
         for it in page_items:
             if since and it.fecha < since:
-                if it.fecha == date.min:
-                    logger.warning(
-                        "Item DESCARTADO por fecha no parseada (raw=%r, asunto=%r, pág %d) "
-                        "— puede ser una notificación real que se está perdiendo.",
+                if it.fecha == date.min and it.asunto.strip():
+                    # Fecha no parseada pero asunto presente → posible notificación real reciente.
+                    # cli.py usa la fecha del detalle como fallback cuando fecha == date.min.
+                    logger.info(
+                        "Item con fecha no parseada incluido (raw=%r, asunto=%r, pág %d)",
                         it.raw_fecha, it.asunto[:50], it.page_index,
                     )
                 else:
-                    logger.debug(
-                        "Filtro since: %s < %s — %s", it.fecha, since, it.asunto[:40]
-                    )
-                continue
+                    if it.fecha == date.min:
+                        logger.debug(
+                            "Item vacío descartado (sin asunto ni fecha, pág %d)", it.page_index
+                        )
+                    else:
+                        logger.debug(
+                            "Filtro since: %s < %s — %s", it.fecha, since, it.asunto[:40]
+                        )
+                    continue
             if until and it.fecha > until:
                 continue
             if it.notification_id in seen_ids:
@@ -355,8 +361,11 @@ async def list_inbox(
             break
 
         # Early termination: si TODOS los items de esta página son anteriores a
-        # `since`, el inbox (orden desc) no tendrá más items relevantes.
-        if since and page_items and all(it.fecha < since for it in page_items):
+        # `since` (y tienen fecha conocida), el inbox (orden desc) no tendrá más items.
+        # Excluir date.min: esos items tienen fecha no parseada y podrían ser recientes.
+        if since and page_items and all(
+            it.fecha < since and it.fecha != date.min for it in page_items
+        ):
             logger.debug("Early stop: pág %d toda anterior a %s", page_index, since)
             break
 
