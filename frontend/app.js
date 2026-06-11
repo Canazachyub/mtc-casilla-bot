@@ -7,8 +7,8 @@
 const STORAGE_KEY    = 'mtc_bot_api_url';
 const API_URL_PREFIX = 'https://script.google.com/macros/';
 const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbznqF-CmlzlNs3IsnS7x0DUjQFeB1ObpxfwaCjUPz3L2r5JCBpSAlFV063xxo3EKZZ0/exec';
-// URL del Redactor (app Streamlit que genera los Word). Cambiar acá si corre en otro host/puerto.
-const REDACTOR_URL   = 'http://localhost:8501';
+// URL del Redactor (app Streamlit que genera los Word). Cambiar acá si se muda de host.
+const REDACTOR_URL   = 'https://redactor-resolve.streamlit.app';
 
 /* ──────────────────────────── Datos legales de empresas ───────── */
 const EMPRESAS_LEGALES = {
