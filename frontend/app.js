@@ -1264,106 +1264,129 @@ function redactorLink(id) {
   return `${REDACTOR_URL}/?case_id=${encodeURIComponent(id)}`;
 }
 
-function btnRedactarHtml(id, extraClass = '') {
+function btnRedactarHtml(id, extraClass = '', label = '📝 Redactar') {
   return `<a class="btn-redactar ${extraClass}" href="${redactorLink(id)}" target="_blank"
-    rel="noopener" title="Redactar respuesta en el Redactor (Streamlit)">📝 Redactar</a>`;
+    rel="noopener" title="Redactar respuesta en el Redactor (Streamlit)">${label}</a>`;
+}
+
+// Formulario colapsado para regenerar la propuesta vía Apps Script.
+// El backend (handleGenerateResponse_) EXIGE template_id + justificacion;
+// ciudad cae a sede/'Lima' y empresa_texto no se usa (por eso no van acá).
+function renderRegenForm(detail) {
+  if (state.templates.length === 0) {
+    return `
+      <p class="muted small" style="margin:0">
+        ⚠️ No hay plantillas disponibles. Ejecutá <code>_setupPlantillas()</code>
+        en Apps Script, luego recargá el dashboard.
+      </p>`;
+  }
+  const suggestedTpl = guessTemplateId(detail);
+  const tplOptions   = state.templates
+    .map(t => `<option value="${escapeHtml(t.id)}"${t.id === suggestedTpl ? ' selected' : ''}>` +
+      `${escapeHtml(t.nombre)}${t.tipo_notificacion ? ' — ' + escapeHtml(t.tipo_notificacion) : ''}` +
+      '</option>')
+    .join('');
+  return `
+    <div class="form-group">
+      <label class="form-label">Plantilla de respuesta</label>
+      <select id="resp-template" class="response-select">
+        <option value="">— Seleccioná una plantilla —</option>
+        ${tplOptions}
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Justificación / Insumos</label>
+      <textarea id="resp-justification" class="response-textarea"
+        placeholder="Fechas relevantes, argumentos legales, datos de la empresa, acciones tomadas..."
+        rows="5"></textarea>
+    </div>
+    <div class="response-actions">
+      <button id="btn-generate" class="btn-generate">✨ Generar con IA</button>
+    </div>
+    <div id="response-generating" class="response-loading hidden">
+      <div class="spinner"></div>
+      Generando respuesta... esto puede tomar unos segundos.
+    </div>
+    <div id="response-output" class="hidden response-output-panel">
+      <div class="form-label-row">
+        <label class="form-label">Borrador generado</label>
+        <span class="muted small">Editá el texto antes de descargar</span>
+      </div>
+      <div id="resp-preview" class="response-preview" contenteditable="true" spellcheck="true"></div>
+      <div class="response-actions">
+        <button id="btn-download-word" class="btn-word">⬇ Descargar Word (.docx)</button>
+        <button id="btn-regenerate" class="btn-secondary">↺ Regenerar</button>
+      </div>
+    </div>`;
 }
 
 function renderResponsePanel(notifId, detail) {
-  if (state.templates.length === 0) {
-    return `
-      <div class="response-no-templates">
-        <p>⚠️ No hay plantillas disponibles.</p>
-        <p class="muted small">Ejecutá <code>_setupPlantillas()</code> en Apps Script, luego recargá el dashboard.</p>
-        <div class="response-actions" style="margin-top:0.7rem">${btnRedactarHtml(notifId)}</div>
+  const propuesta     = String(detail.propuesta_respuesta || '').trim();
+  const propuestaHtml = propuesta
+    ? `
+      <div class="propuesta-header">
+        <p class="section-heading" style="margin:0">💬 Propuesta de respuesta (IA)</p>
+        <button id="btn-copy-propuesta" class="btn-secondary btn-copy-propuesta">📋 Copiar</button>
       </div>
-    `;
-  }
-  const suggestedTpl  = guessTemplateId(detail);
-  const tplOptions    = state.templates
-    .map(t => `<option value="${escapeHtml(t.id)}"${t.id === suggestedTpl ? ' selected' : ''}>${escapeHtml(t.nombre)}${t.tipo_notificacion ? ' — ' + escapeHtml(t.tipo_notificacion) : ''}</option>`)
-    .join('');
-  const ciudadDefault = escapeHtml(detail.sede || 'Lima');
-  const empresaOptions = Object.keys(EMPRESAS_LEGALES)
-    .map(k => `<option value="${escapeHtml(k)}">${escapeHtml(EMPRESAS_LEGALES[k].nombre)}</option>`)
-    .join('');
+      <div class="propuesta-block">${escapeHtml(propuesta)}</div>`
+    : `
+      <p class="section-heading" style="margin:0">💬 Propuesta de respuesta (IA)</p>
+      <p class="muted" style="margin:0;font-size:0.875rem">
+        Aún no hay propuesta generada para este caso.
+      </p>`;
+
   return `
     <div class="response-panel">
       <div class="response-context">
         <strong>${escapeHtml(detail.documento || '—')}</strong>
         <p class="muted small" style="margin:0.2rem 0 0">${escapeHtml(detail.asunto || '')}</p>
       </div>
-      <div class="form-group">
-        <label class="form-label">Empresa que representa (personería jurídica)</label>
-        <select id="resp-empresa" class="response-select">
-          <option value="">— Seleccioná la empresa —</option>
-          ${empresaOptions}
-        </select>
-        <div id="resp-empresa-preview" class="empresa-preview hidden"></div>
+
+      ${propuestaHtml}
+
+      <div class="redactor-cta">
+        ${btnRedactarHtml(notifId, 'btn-redactar-cta', '📝 Redactar en el Redactor')}
+        <p class="cta-caption muted small">
+          Se abre el Redactor con este caso precargado (requiere contraseña).
+        </p>
       </div>
-      <div class="form-group">
-        <label class="form-label">Plantilla de respuesta</label>
-        <select id="resp-template" class="response-select">
-          <option value="">— Seleccioná una plantilla —</option>
-          ${tplOptions}
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label">Ciudad (encabezado del documento)</label>
-        <input id="resp-ciudad" type="text" class="response-input" value="${ciudadDefault}" placeholder="Lima">
-      </div>
-      <div class="form-group">
-        <label class="form-label">Justificación / Insumos</label>
-        <textarea id="resp-justification" class="response-textarea"
-          placeholder="Fechas relevantes, argumentos legales, datos de la empresa, acciones tomadas..."
-          rows="6"></textarea>
-      </div>
-      <div class="response-actions">
-        <button id="btn-generate" class="btn-generate">✨ Generar con IA</button>
-        ${btnRedactarHtml(notifId)}
-      </div>
-      <div id="response-generating" class="response-loading hidden">
-        <div class="spinner"></div>
-        Generando respuesta... esto puede tomar unos segundos.
-      </div>
-      <div id="response-output" class="hidden response-output-panel">
-        <div class="form-label-row">
-          <label class="form-label">Borrador generado</label>
-          <span class="muted small">Editá el texto antes de descargar</span>
-        </div>
-        <div id="resp-preview" class="response-preview" contenteditable="true" spellcheck="true"></div>
-        <div class="response-actions">
-          <button id="btn-download-word" class="btn-word">⬇ Descargar Word (.docx)</button>
-          <button id="btn-regenerate" class="btn-secondary">↺ Regenerar</button>
-        </div>
-      </div>
+
+      <details class="regen-details">
+        <summary>⚙️ Regenerar propuesta con IA</summary>
+        <div class="regen-body">${renderRegenForm(detail)}</div>
+      </details>
     </div>
   `;
 }
 
 function bindResponsePanelEvents(notifId, detail) {
-  // Mostrar preview del texto legal al seleccionar empresa
-  document.getElementById('resp-empresa').addEventListener('change', function () {
-    const preview = document.getElementById('resp-empresa-preview');
-    const empresa = EMPRESAS_LEGALES[this.value];
-    if (empresa) {
-      preview.textContent = empresa.texto;
-      preview.classList.remove('hidden');
-    } else {
-      preview.classList.add('hidden');
-    }
-  });
+  // Copiar la propuesta al portapapeles con feedback visual breve
+  const btnCopy = document.getElementById('btn-copy-propuesta');
+  if (btnCopy) {
+    btnCopy.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(String(detail.propuesta_respuesta || '').trim());
+        const original     = btnCopy.textContent;
+        btnCopy.textContent = '✅ Copiado';
+        btnCopy.disabled    = true;
+        setTimeout(() => { btnCopy.textContent = original; btnCopy.disabled = false; }, 1500);
+      } catch (err) {
+        showToast('No se pudo copiar: ' + err.message, 'error');
+      }
+    });
+  }
 
-  document.getElementById('btn-generate').addEventListener('click', async () => {
-    const templateId    = document.getElementById('resp-template').value;
-    const empresaKey    = document.getElementById('resp-empresa').value;
-    const justificacion = document.getElementById('resp-justification').value.trim();
-    const ciudad        = (document.getElementById('resp-ciudad')?.value || '').trim() || detail.sede || 'Lima';
-    if (!empresaKey)   { showToast('Seleccioná la empresa primero', 'warn'); return; }
-    if (!templateId)   { showToast('Seleccioná una plantilla primero', 'warn'); return; }
-    const empresaTexto = EMPRESAS_LEGALES[empresaKey]?.texto || '';
-    await handleGenerateResponse(notifId, templateId, justificacion, ciudad, empresaTexto);
-  });
+  // Regenerar con IA (el Apps Script exige plantilla + justificación)
+  const btnGen = document.getElementById('btn-generate');
+  if (btnGen) {
+    btnGen.addEventListener('click', async () => {
+      const templateId    = document.getElementById('resp-template').value;
+      const justificacion = document.getElementById('resp-justification').value.trim();
+      if (!templateId)    { showToast('Seleccioná una plantilla primero', 'warn'); return; }
+      if (!justificacion) { showToast('Escribí la justificación / insumos primero', 'warn'); return; }
+      await handleGenerateResponse(notifId, templateId, justificacion, detail.sede || 'Lima');
+    });
+  }
   const btnDownload = document.getElementById('btn-download-word');
   if (btnDownload) {
     btnDownload.addEventListener('click', () => {
@@ -1381,7 +1404,7 @@ function bindResponsePanelEvents(notifId, detail) {
   }
 }
 
-async function handleGenerateResponse(notifId, templateId, justificacion, ciudad, empresaTexto) {
+async function handleGenerateResponse(notifId, templateId, justificacion, ciudad) {
   const genBtn  = document.getElementById('btn-generate');
   const spinner = document.getElementById('response-generating');
   const output  = document.getElementById('response-output');
@@ -1397,7 +1420,6 @@ async function handleGenerateResponse(notifId, templateId, justificacion, ciudad
       template_id:     templateId,
       justificacion,
       ciudad:          ciudad || 'Lima',
-      empresa_texto:   empresaTexto || '',
     });
     document.getElementById('resp-preview').innerText = result.respuesta || '(Sin respuesta generada)';
     output.classList.remove('hidden');
